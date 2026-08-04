@@ -1,0 +1,37 @@
+# Artefatos gerados pelo Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+
+# Projetos de plataforma são gerados no CI (flutter create) — não versionados
+android/
+ios/
+linux/
+macos/
+windows/
+web/
+
+# Credenciais NUNCA entram no repositório.
+# URL e token do Turso são digitados na tela "Configuração do Banco"
+# e ficam salvos apenas no dispositivo.
+.env
+*.env
+.env.*
+secrets.toml
+.streamlit/
+*.keystore
+*.jks
+key.properties
+
+# Bancos locais de teste
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# IDE
+.idea/
+.vscode/
+*.iml
