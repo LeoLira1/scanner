@@ -61,7 +61,14 @@ class EstoqueService {
     try {
       // 1. Resolve o produto por QUALQUER um de seus códigos — principal
       //    (mapa_produtos.codigo) ou secundário (mapa_produtos_codigos).
-      final produto = await _resolverProduto(client, codigo);
+      _ProdutoMapa? produto;
+      try {
+        produto = await _resolverProduto(client, codigo);
+      } catch (e) {
+        if (!_tabelaAusente(e)) rethrow;
+        // Banco sem as tabelas do mapa: segue como código não vinculado.
+        produto = null;
+      }
 
       if (produto == null) {
         // Código não vinculado a nenhum mapa_produtos: não existe grupo de
@@ -107,6 +114,18 @@ class EstoqueService {
     }
   }
 
+  /// True quando a exceção é "tabela não existe".
+  ///
+  /// `mapa_produtos` e `mapa_produtos_codigos` são criadas pelo dashboard
+  /// (db_mapa.ensure_mapa_tables) e podem não existir num banco onde o
+  /// mapa nunca foi usado. Nesse caso o certo é cair no saldo da linha
+  /// única de estoque_mestre com o aviso de total incompleto — e não
+  /// estourar um erro cru na cara de quem está no galpão.
+  static bool _tabelaAusente(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('no such table');
+  }
+
   Future<_ProdutoMapa?> _resolverProduto(
     LibsqlClient client,
     String codigo,
@@ -136,14 +155,20 @@ class EstoqueService {
     String produtoId,
     String? codigoPrincipal,
   ) async {
-    final stmt = await client.prepare(
-      'SELECT codigo FROM mapa_produtos_codigos WHERE produto_id = ?',
-    );
-    final rows = await stmt.query(positional: [produtoId]);
     final cods = <String>{};
-    for (final row in rows) {
-      final c = normalizarCodigo(row['codigo'] as String?);
-      if (c != null) cods.add(c);
+    try {
+      final stmt = await client.prepare(
+        'SELECT codigo FROM mapa_produtos_codigos WHERE produto_id = ?',
+      );
+      final rows = await stmt.query(positional: [produtoId]);
+      for (final row in rows) {
+        final c = normalizarCodigo(row['codigo'] as String?);
+        if (c != null) cods.add(c);
+      }
+    } catch (e) {
+      // Sem a tabela de códigos secundários resta o principal — melhor que
+      // derrubar a consulta inteira.
+      if (!_tabelaAusente(e)) rethrow;
     }
     final principal = normalizarCodigo(codigoPrincipal);
     if (principal != null) cods.add(principal);
