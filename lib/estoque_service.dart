@@ -143,10 +143,10 @@ class EstoqueService {
     if (rows.isEmpty) return null;
     final r = rows.first;
     return _ProdutoMapa(
-      produtoId: r['produto_id'] as String? ?? '',
-      nome: r['nome'] as String? ?? '',
-      unidadePad: (r['unidade_pad'] as String?)?.trim(),
-      codigoPrincipal: r['codigo'] as String?,
+      produtoId: _texto(r['produto_id']),
+      nome: _texto(r['nome']),
+      unidadePad: _texto(r['unidade_pad']).trim(),
+      codigoPrincipal: _texto(r['codigo']),
     );
   }
 
@@ -162,7 +162,7 @@ class EstoqueService {
       );
       final rows = await stmt.query(positional: [produtoId]);
       for (final row in rows) {
-        final c = normalizarCodigo(row['codigo'] as String?);
+        final c = normalizarCodigo(_texto(row['codigo']));
         if (c != null) cods.add(c);
       }
     } catch (e) {
@@ -191,14 +191,14 @@ class EstoqueService {
 
     final porCodigo = <String, CodigoSaldo>{};
     for (final r in rows) {
-      final cod = normalizarCodigo(r['codigo'] as String?);
+      final cod = normalizarCodigo(_texto(r['codigo']));
       if (cod == null) continue;
       porCodigo[cod] = CodigoSaldo(
         codigo: cod,
-        produto: (r['produto'] as String?) ?? '',
-        categoria: (r['categoria'] as String?)?.trim(),
+        produto: _texto(r['produto']),
+        categoria: _texto(r['categoria']).trim(),
         qtdSistema: _numero(r['qtd_sistema']),
-        ultimaContagem: r['ultima_contagem'] as String?,
+        ultimaContagem: _texto(r['ultima_contagem']),
       );
     }
 
@@ -208,6 +208,11 @@ class EstoqueService {
         if (porCodigo.containsKey(c)) porCodigo[c]!,
     ];
   }
+
+  /// Lê uma coluna como texto sem assumir o tipo devolvido pelo driver.
+  /// As colunas são TEXT no esquema, mas um cast rígido que falhasse
+  /// transformaria toda consulta em "Falha na consulta" no meio do galpão.
+  static String _texto(dynamic v) => v?.toString() ?? '';
 
   static double _numero(dynamic v) {
     if (v == null) return 0;
