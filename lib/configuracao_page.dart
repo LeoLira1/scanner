@@ -19,9 +19,12 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
   final _urlCtrl   = TextEditingController();
   final _tokenCtrl = TextEditingController();
 
-  bool    _testando    = false;
+  bool    _testando      = false;
   String? _statusTeste;
-  bool    _testeOk     = false;
+  bool    _testeOk       = false;
+  bool    _cacheLocal    = true;
+  bool    _sincronizando = false;
+  bool    _limpandoCache = false;
 
   @override
   void initState() {
@@ -42,7 +45,108 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
     setState(() {
       _urlCtrl.text   = prefs.getString(TursoService.keyDbUrl)   ?? '';
       _tokenCtrl.text = prefs.getString(TursoService.keyDbToken) ?? '';
+      _cacheLocal     = prefs.getBool(TursoService.keyCacheLocal) ?? true;
     });
+  }
+
+  Future<void> _alterarCacheLocal(bool valor) async {
+    setState(() => _cacheLocal = valor);
+    await TursoService().definirCacheLocal(valor);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _sincronizarAgora() async {
+    setState(() => _sincronizando = true);
+    final ok = await TursoService().sincronizar();
+    if (!mounted) return;
+    setState(() => _sincronizando = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Sincronizado com o banco online ✓'
+          : 'Não foi possível sincronizar — '
+              '${TursoService().ultimoErroSync ?? 'verifique a conexão'}'),
+      backgroundColor:
+          ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
+      duration: Duration(seconds: ok ? 2 : 6),
+    ));
+  }
+
+  Future<void> _confirmarLimparCache() async {
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TemaCamda.card,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        title: Text(
+          'Limpar cache local?',
+          style: TemaCamda.textoStyle(tamanho: 15, peso: 600),
+        ),
+        content: Text(
+          'Apaga o arquivo de dados salvo neste dispositivo e baixa tudo '
+          'de novo do banco online.\n\n'
+          'Nada é perdido: o app só lê o estoque, então o arquivo local é '
+          'sempre uma cópia do banco.',
+          style: TemaCamda.textoStyle(
+            tamanho: 13,
+            cor: TemaCamda.textoFraco,
+            altura: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancelar',
+              style: TemaCamda.textoStyle(
+                tamanho: 13,
+                cor: TemaCamda.textoFraco,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              'Limpar e rebaixar',
+              style: TemaCamda.textoStyle(
+                tamanho: 13,
+                cor: TemaCamda.vermelho,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmou == true) await _limparCacheLocal();
+  }
+
+  Future<void> _limparCacheLocal() async {
+    setState(() => _limpandoCache = true);
+    final servico = TursoService();
+    final ok = await servico.limparCacheLocal();
+    if (ok) await servico.init();
+    if (!mounted) return;
+    setState(() => _limpandoCache = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? (servico.isConnected
+              ? 'Cache local limpo — baixando do banco online ✓'
+              : 'Cache local limpo — sem conexão para rebaixar agora')
+          : 'Não foi possível limpar o cache local'),
+      backgroundColor:
+          ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
+      duration: const Duration(seconds: 4),
+    ));
+  }
+
+  String _textoUltimaSync() {
+    final quando = TursoService().ultimaSincronizacao;
+    if (quando == null) return 'Nunca sincronizado';
+    String dois(int n) => n.toString().padLeft(2, '0');
+    return 'Última sincronização: ${dois(quando.day)}/${dois(quando.month)}/'
+        '${quando.year} ${dois(quando.hour)}:${dois(quando.minute)}';
   }
 
   Future<void> _salvarConfig() async {
@@ -181,6 +285,128 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
+            ),
+
+            // ── Cache local ─────────────────────────────────────────────
+            const SizedBox(height: 28),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D1117),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: TemaCamda.borda),
+              ),
+              child: Column(children: [
+                SwitchListTile(
+                  value: _cacheLocal,
+                  onChanged: _alterarCacheLocal,
+                  activeThumbColor: const Color(0xFF4A9D6A),
+                  title: Text(
+                    'Cache local',
+                    style: TemaCamda.textoStyle(tamanho: 13),
+                  ),
+                  subtitle: Text(
+                    'Guarda uma cópia dos dados num arquivo do dispositivo: '
+                    'o app abre e responde na hora, mesmo com internet '
+                    'ruim. Use Sincronizar para trazer as novidades do '
+                    'banco online.',
+                    style: TemaCamda.textoStyle(
+                      tamanho: 11,
+                      cor: TemaCamda.textoFraco,
+                      altura: 1.4,
+                    ),
+                  ),
+                ),
+                if (_cacheLocal)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                    child: Row(children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _textoUltimaSync(),
+                              style: TemaCamda.numeroStyle(
+                                tamanho: 11,
+                                cor: TemaCamda.textoFraco,
+                              ),
+                            ),
+                            if (TursoService().ultimoErroSync != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Última falha: '
+                                '${TursoService().ultimoErroSync}',
+                                style: TemaCamda.textoStyle(
+                                  tamanho: 11,
+                                  cor: TemaCamda.vermelho,
+                                  altura: 1.3,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _sincronizando ? null : _sincronizarAgora,
+                        icon: _sincronizando
+                            ? const SizedBox(
+                                width: 13,
+                                height: 13,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF4A9D6A),
+                                ),
+                              )
+                            : const Icon(Icons.sync, size: 15),
+                        label: Text(
+                          _sincronizando ? 'Sincronizando...' : 'Sincronizar',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF4A9D6A),
+                          side: const BorderSide(color: Color(0xFF2E4A38)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ),
+                if (_cacheLocal)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed:
+                            _limpandoCache ? null : _confirmarLimparCache,
+                        icon: _limpandoCache
+                            ? const SizedBox(
+                                width: 13,
+                                height: 13,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: TemaCamda.vermelho,
+                                ),
+                              )
+                            : const Icon(Icons.delete_sweep_outlined, size: 15),
+                        label: Text(
+                          _limpandoCache ? 'Limpando...' : 'Limpar cache local',
+                        ),
+                        style: TextButton.styleFrom(
+                          foregroundColor: TemaCamda.vermelho,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 4,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ]),
             ),
 
             if (_statusTeste != null) ...[

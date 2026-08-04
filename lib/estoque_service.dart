@@ -41,7 +41,22 @@ class EstoqueService {
           ? 'Sem conexão com o banco — verifique a internet.'
           : 'Configure URL e token do banco em ⚙️.');
     }
+    // Cache local recém-criado: espera a carga inicial. Consultar a replica
+    // vazia responderia "não encontrado" para qualquer código — erro
+    // silencioso, justamente o que não pode acontecer aqui.
+    if (!await turso.garantirDadosProntos()) {
+      throw ConsultaException(
+        'O cache local ainda está vazio e não deu para baixar os dados '
+        '(${turso.ultimoErroSync ?? 'sem conexão'}). '
+        'Conecte à internet e toque em Sincronizar em ⚙️.',
+      );
+    }
     final client = turso.client!;
+
+    // Dado servido do arquivo local é rotulado na tela do produto com o
+    // horário da última sincronização.
+    final doCache = turso.modoLocal;
+    final sincronizadoEm = turso.ultimaSincronizacao;
 
     try {
       // 1. Resolve o produto por QUALQUER um de seus códigos — principal
@@ -59,6 +74,8 @@ class EstoqueService {
           codigoLido: codigo,
           linhas: linhas,
           codigosVinculados: const [],
+          doCacheLocal: doCache,
+          sincronizadoEm: sincronizadoEm,
         );
       }
 
@@ -80,6 +97,8 @@ class EstoqueService {
         codigosVinculados: codigos,
         nomeMapa: produto.nome,
         unidadePad: produto.unidadePad,
+        doCacheLocal: doCache,
+        sincronizadoEm: sincronizadoEm,
       );
     } on ConsultaException {
       rethrow;

@@ -47,6 +47,27 @@ produto em `mapa_produtos`/`mapa_produtos_codigos` e **soma o
 nenhum produto do mapa, o app mostra o saldo da linha única com um aviso
 de que o total pode estar incompleto.
 
+## Cache local
+
+Em ⚙️, a chave **Cache local** (ligada por padrão) mantém uma cópia do
+banco num arquivo do aparelho — o app abre e responde na hora, mesmo com
+a internet ruim do galpão. Ali também ficam:
+
+- **Sincronizar** — puxa as novidades do banco online;
+- **Limpar cache local** — apaga o arquivo e baixa tudo de novo;
+- a data e hora da **última sincronização**.
+
+Quando a resposta vem do arquivo local, a tela do produto avisa com
+`CACHE LOCAL · sincronizado há N min`; quando vem direto do banco, mostra
+`consultado agora do banco`.
+
+Como o app só lê, a réplica local é aberta em modo `replica` (nunca
+`offline`): não existe gravação para empurrar de volta, então um token
+read-only basta e não há risco de conflito de frames. Na primeira consulta
+com o cache ainda vazio o app espera a carga inicial em vez de responder
+"código não encontrado" — um cache vazio nunca é confundido com estoque
+inexistente.
+
 ## Como gerar o APK (sem PC)
 
 1. Vá em **Actions → Build & Release APK → Run workflow**.
