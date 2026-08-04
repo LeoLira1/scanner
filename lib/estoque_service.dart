@@ -71,11 +71,14 @@ class EstoqueService {
       }
 
       if (produto == null) {
-        // Código não vinculado a nenhum mapa_produtos: não existe grupo de
-        // códigos para somar. Mostra o saldo da linha única de
-        // estoque_mestre — a UI exibe o aviso de total possivelmente
-        // incompleto (silenciar isso recria o bug corrigido no dashboard).
-        final linhas = await _lerEstoque(client, [codigo]);
+        // Código não vinculado a nenhum mapa_produtos. Aplica a convenção
+        // US-prefix: todo produto com dois códigos tem um com 'US' na
+        // frente ('254185' ↔ 'US254185'). Busca o par no estoque_mestre
+        // para somar os dois saldos. Se o par não existir, _lerEstoque
+        // devolve só o código que existe — sem erro.
+        final par = _codigoPar(codigo);
+        final codigos = par != null ? [codigo, par] : [codigo];
+        final linhas = await _lerEstoque(client, codigos);
         if (linhas.isEmpty) return null;
         return montarResultado(
           codigoLido: codigo,
@@ -207,6 +210,16 @@ class EstoqueService {
       for (final c in codigos)
         if (porCodigo.containsKey(c)) porCodigo[c]!,
     ];
+  }
+
+  /// Par de código pela convenção US-prefix: 'US254185' → '254185',
+  /// '254185' → 'US254185'. Retorna null se remover 'US' deixaria vazio.
+  static String? _codigoPar(String codigo) {
+    if (codigo.startsWith('US')) {
+      final sem = codigo.substring(2);
+      return sem.isEmpty ? null : sem;
+    }
+    return 'US$codigo';
   }
 
   /// Lê uma coluna como texto sem assumir o tipo devolvido pelo driver.
