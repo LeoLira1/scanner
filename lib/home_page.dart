@@ -4,6 +4,7 @@ import 'configuracao_page.dart';
 import 'consulta.dart';
 import 'estoque_service.dart';
 import 'produto_page.dart';
+import 'scanner_page.dart';
 import 'tema.dart';
 import 'turso_service.dart';
 
@@ -48,6 +49,12 @@ class _HomePageState extends State<HomePage> {
       MaterialPageRoute(builder: (_) => const ConfiguracaoPage()),
     );
     _verificarConfiguracao();
+  }
+
+  Future<void> _abrirScanner() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ScannerPage()),
+    );
   }
 
   /// Consulta a leitura (digitada agora; da câmera na Etapa 3) e abre a
@@ -109,26 +116,30 @@ class _HomePageState extends State<HomePage> {
                   consultando: _consultando,
                   erro: _erro,
                   onConsultar: _consultar,
+                  onEscanear: _abrirScanner,
                 )
               : _SemConfiguracao(onConfigurar: _abrirConfiguracao),
     );
   }
 }
 
-/// Consulta por digitação manual — sempre acessível. É o fallback quando o
-/// QR estiver sujo ou rasgado, e permite testar o app inteiro sem câmera.
+/// Busca: câmera em destaque + digitação manual sempre acessível — o
+/// fallback quando o QR estiver sujo ou rasgado, e a forma de testar o app
+/// inteiro sem câmera.
 class _Busca extends StatelessWidget {
   const _Busca({
     required this.codigoCtrl,
     required this.consultando,
     required this.erro,
     required this.onConsultar,
+    required this.onEscanear,
   });
 
   final TextEditingController codigoCtrl;
   final bool consultando;
   final String? erro;
   final void Function(String) onConsultar;
+  final VoidCallback onEscanear;
 
   @override
   Widget build(BuildContext context) {
@@ -141,28 +152,46 @@ class _Busca extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(
-                Icons.qr_code_scanner,
-                size: 52,
-                color: TemaCamda.textoFraco,
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Digite o código do produto',
-                textAlign: TextAlign.center,
-                style: TemaCamda.textoStyle(
-                  tamanho: 15,
-                  peso: 600,
+              // Caminho principal: apontar a câmera para a etiqueta.
+              ElevatedButton.icon(
+                onPressed: consultando ? null : onEscanear,
+                icon: const Icon(Icons.qr_code_scanner, size: 22),
+                label: Text(
+                  'Escanear com a câmera',
+                  style: TemaCamda.textoStyle(
+                    tamanho: 15,
+                    peso: 600,
+                    cor: Colors.white,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: TemaCamda.laranja,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor:
+                      TemaCamda.laranja.withValues(alpha: 0.45),
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                'O mesmo código da etiqueta — numérico ou US',
-                textAlign: TextAlign.center,
-                style: TemaCamda.textoStyle(
-                  tamanho: 12,
-                  cor: TemaCamda.textoFraco,
-                ),
+
+              const SizedBox(height: 28),
+              Row(
+                children: [
+                  const Expanded(child: Divider(color: TemaCamda.borda)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      'ou digite o código',
+                      style: TemaCamda.textoStyle(
+                        tamanho: 12,
+                        cor: TemaCamda.textoFraco,
+                      ),
+                    ),
+                  ),
+                  const Expanded(child: Divider(color: TemaCamda.borda)),
+                ],
               ),
               const SizedBox(height: 22),
 
@@ -204,8 +233,9 @@ class _Busca extends StatelessWidget {
               ),
               const SizedBox(height: 14),
 
-              // Botão grande — área de toque generosa para uso com uma mão.
-              ElevatedButton.icon(
+              // Área de toque generosa (uso de pé, com uma mão), em estilo
+              // secundário: a câmera é o caminho principal.
+              OutlinedButton.icon(
                 onPressed:
                     consultando ? null : () => onConsultar(codigoCtrl.text),
                 icon: consultando
@@ -214,7 +244,7 @@ class _Busca extends StatelessWidget {
                         height: 16,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: TemaCamda.verde,
                         ),
                       )
                     : const Icon(Icons.search, size: 20),
@@ -223,14 +253,14 @@ class _Busca extends StatelessWidget {
                   style: TemaCamda.textoStyle(
                     tamanho: 15,
                     peso: 600,
-                    cor: Colors.white,
+                    cor: TemaCamda.verde,
                   ),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: TemaCamda.laranja,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                      TemaCamda.laranja.withValues(alpha: 0.45),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: TemaCamda.verde,
+                  side: BorderSide(
+                    color: TemaCamda.verde.withValues(alpha: 0.45),
+                  ),
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),

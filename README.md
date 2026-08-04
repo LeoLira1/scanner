@@ -23,6 +23,19 @@ repositório.
 > Não é pelo repositório (o token não vai para lá) — é por celular perdido:
 > com token read-only, quem achar o aparelho não consegue alterar o estoque.
 
+## Leitura
+
+Duas formas, sempre disponíveis:
+
+- **Câmera** (`mobile_scanner` / ML Kit): lê QR e código de barras 1D ao
+  vivo, com lanterna para os cantos escuros do galpão. Aceita tanto um
+  código puro (`US254185`) quanto uma URL que contenha `p=`.
+- **Digitação manual**: o fallback quando o QR está sujo ou rasgado — e a
+  forma de testar o app inteiro sem depender da câmera.
+
+A permissão de câmera é pedida pelo Android na primeira leitura; se for
+negada, a tela explica e oferece a digitação manual.
+
 ## Regra crítica: múltiplos códigos
 
 Um produto da CAMDA pode ter mais de um código ativo — tipicamente um
