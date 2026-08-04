@@ -1,0 +1,97 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches:
+      - main
+      - "claude/scanner-qr-barcode-app-9ld9nu"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Scaffold Android project structure
+        # Gera o projeto Android padrão do Flutter num diretório temporário
+        # e copia apenas a pasta android/ para o workspace.
+        # Isso evita incluir binários (gradle-wrapper.jar) no repositório.
+        run: |
+          flutter create \
+            --org com.camda \
+            --project-name scanner_camda \
+            /tmp/scaffold
+
+          MANIFEST=/tmp/scaffold/android/app/src/main/AndroidManifest.xml
+
+          # Corrige o label do app
+          sed -i \
+            's/android:label="scanner_camda"/android:label="Scanner CAMDA"/' \
+            "$MANIFEST"
+
+          # Garante permissões de rede — flutter create nem sempre injeta
+          # ambas no manifesto principal; sem elas o DNS falha em release.
+          grep -q 'android.permission.INTERNET' "$MANIFEST" || \
+            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <application|' \
+              "$MANIFEST"
+
+          cp -r /tmp/scaffold/android .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate launcher icons
+        # Gera os mipmaps do ícone do app (qr-code.png na raiz, config no
+        # pubspec.yaml) dentro do android/ recém-scaffoldado.
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Tests
+        run: |
+          if [ -d test ]; then flutter test; fi
+
+      - name: Build APK release
+        run: flutter build apk --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-camda-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "Scanner CAMDA #${{ github.run_number }}"
+          body: |
+            ## Scanner CAMDA — consulta de estoque por QR / código de barras
+
+            App somente leitura, conexão direta ao Turso via libsql_dart.
+
+            **Primeiro uso:** toque em ⚙️ e configure URL + Token do banco
+            (recomendado: token read-only).
+
+            **Build:** #${{ github.run_number }} | Branch: `${{ github.ref_name }}`
+          files: build/app/outputs/flutter-apk/app-release.apk
+          make_latest: true

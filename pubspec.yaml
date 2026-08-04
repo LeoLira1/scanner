@@ -1,0 +1,47 @@
+name: scanner_camda
+description: Consulta de estoque por QR code e código de barras — CAMDA. Somente leitura.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  libsql_dart: ^0.9.0
+  path_provider: ^2.1.0
+  shared_preferences: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+
+# Ícone do app (qr-code.png na raiz, enviado pelo Leo). O projeto Android é
+# gerado pelo CI (flutter create no build.yml), então os mipmaps são gerados
+# lá com `dart run flutter_launcher_icons` logo após o scaffold.
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "qr-code.png"
+  adaptive_icon_background: "#0C0D0F"
+  adaptive_icon_foreground: "qr-code.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+
+  # Identidade do tag-estoque.html (maquete do Leo): JetBrains Mono para
+  # números, Sora para texto. Embarcadas como asset para funcionar offline
+  # (galpão com internet ruim) — nada de download de fonte em runtime.
+  fonts:
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+    - family: Sora
+      fonts:
+        - asset: assets/fonts/Sora-Regular.ttf
