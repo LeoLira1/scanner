@@ -194,8 +194,15 @@ class TursoService {
         "SELECT count(*) AS n FROM sqlite_master "
         "WHERE type = 'table' AND name = 'estoque_mestre'",
       );
-      final rows = await stmt.query() as List<dynamic>;
-      final n = (rows.first as Map<String, dynamic>)['n'] as int? ?? 0;
+      final rows = await stmt.query();
+      if (rows.isEmpty) return true;
+      // O contador chega como PlatformInt64 (int no Android). Um cast
+      // rígido que falhasse marcaria o cache como vazio para sempre — e aí
+      // toda consulta dispararia uma carga completa. Lê como num.
+      final bruto = rows.first['n'];
+      final n = bruto is num
+          ? bruto.toInt()
+          : int.tryParse(bruto?.toString() ?? '') ?? 0;
       return n == 0;
     } catch (_) {
       // Na dúvida, trata como vazia: melhor esperar uma carga a mais do

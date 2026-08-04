@@ -120,9 +120,9 @@ class EstoqueService {
       '                AND UPPER(TRIM(mpc.codigo)) = ?) '
       'LIMIT 1',
     );
-    final rows = await stmt.query(positional: [codigo, codigo]) as List<dynamic>;
+    final rows = await stmt.query(positional: [codigo, codigo]);
     if (rows.isEmpty) return null;
-    final r = rows.first as Map<String, dynamic>;
+    final r = rows.first;
     return _ProdutoMapa(
       produtoId: r['produto_id'] as String? ?? '',
       nome: r['nome'] as String? ?? '',
@@ -139,10 +139,10 @@ class EstoqueService {
     final stmt = await client.prepare(
       'SELECT codigo FROM mapa_produtos_codigos WHERE produto_id = ?',
     );
-    final rows = await stmt.query(positional: [produtoId]) as List<dynamic>;
+    final rows = await stmt.query(positional: [produtoId]);
     final cods = <String>{};
-    for (final dynamic row in rows) {
-      final c = normalizarCodigo((row as Map<String, dynamic>)['codigo'] as String?);
+    for (final row in rows) {
+      final c = normalizarCodigo(row['codigo'] as String?);
       if (c != null) cods.add(c);
     }
     final principal = normalizarCodigo(codigoPrincipal);
@@ -162,11 +162,10 @@ class EstoqueService {
       'FROM estoque_mestre '
       'WHERE UPPER(TRIM(codigo)) IN ($placeholders)',
     );
-    final rows = await stmt.query(positional: codigos) as List<dynamic>;
+    final rows = await stmt.query(positional: codigos);
 
     final porCodigo = <String, CodigoSaldo>{};
-    for (final dynamic row in rows) {
-      final r = row as Map<String, dynamic>;
+    for (final r in rows) {
       final cod = normalizarCodigo(r['codigo'] as String?);
       if (cod == null) continue;
       porCodigo[cod] = CodigoSaldo(
