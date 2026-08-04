@@ -41,6 +41,43 @@ void main() {
     expect(find.textContaining('28/07/2026'), findsOneWidget);
   });
 
+  testWidgets(
+      'não afirma unidade no número: mostra cru e rotula a unidade do mapa',
+      (tester) async {
+    final r = montarResultado(
+      codigoLido: 'US254185',
+      linhas: const [linha201, linha403],
+      codigosVinculados: const ['254185', 'US254185'],
+      unidadePad: 'L',
+    );
+
+    await tester.pumpWidget(_envolver(r));
+    await tester.pumpAndSettle();
+
+    // O número aparece sozinho — nada de "604 L" colado, que afirmaria
+    // litros quando qtd_sistema conta embalagens (ver Passo 0).
+    expect(find.text('604'), findsOneWidget);
+    expect(find.text('L'), findsNothing);
+    expect(
+      find.text('valor cru do sistema · conversão de unidade não confirmada'),
+      findsOneWidget,
+    );
+    expect(find.text('unidade gravada no mapa: L'), findsOneWidget);
+  });
+
+  testWidgets('sem unidade_pad não inventa rótulo de unidade', (tester) async {
+    final r = montarResultado(
+      codigoLido: 'US254185',
+      linhas: const [linha403],
+      codigosVinculados: const ['US254185'],
+    );
+
+    await tester.pumpWidget(_envolver(r));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('unidade gravada no mapa'), findsNothing);
+  });
+
   testWidgets('código não vinculado exibe o aviso de total incompleto',
       (tester) async {
     final r = montarResultado(

@@ -125,9 +125,19 @@ class _Cartao extends StatelessWidget {
             ),
           ],
 
-          // 2. Quantidade, grande — número cru, unidade como está gravada.
+          // 2. Quantidade, grande — número cru de qtd_sistema.
+          //
+          // A unidade NÃO vai colada no número de propósito: o dashboard do
+          // camda-estoque calcula litros como qtd_sistema × tamanho da
+          // embalagem lido do nome (app_turso.py, extrair_litros), ou seja,
+          // qtd_sistema conta EMBALAGENS, não litros. Já o unidade_pad do
+          // mapa é um selectbox preenchido à mão, com default 'L'. Escrever
+          // "604 L" ao lado do número afirmaria as duas coisas erradas de
+          // uma vez. Enquanto o Passo 0 não for confirmado no banco, o
+          // número aparece cru e a unidade gravada vem rotulada como o que
+          // é: um campo do mapa, não a unidade deste número.
           const SizedBox(height: 30),
-          _Leitura(total: r.total, unidade: r.unidadePad),
+          _Leitura(total: r.total),
 
           // Aviso: código sem vínculo no mapa — não existe grupo de códigos
           // para somar, então o total pode estar incompleto.
@@ -141,6 +151,31 @@ class _Cartao extends StatelessWidget {
                 cor: TemaCamda.laranja,
                 espacamento: 1.2,
                 altura: 1.5,
+              ),
+            ),
+          ],
+
+          // Slot da "equivalência" da maquete: por enquanto carrega o
+          // aviso de que a conversão ainda não foi confirmada. Quando o
+          // Passo 0 fechar, é aqui que entra "12.080 L em estoque".
+          const SizedBox(height: 8),
+          Text(
+            'valor cru do sistema · conversão de unidade não confirmada',
+            textAlign: TextAlign.center,
+            style: TemaCamda.numeroStyle(
+              tamanho: 12,
+              cor: TemaCamda.textoFraco,
+              altura: 1.4,
+            ),
+          ),
+          if ((r.unidadePad ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'unidade gravada no mapa: ${r.unidadePad}',
+              textAlign: TextAlign.center,
+              style: TemaCamda.numeroStyle(
+                tamanho: 11,
+                cor: const Color(0xFF4A5058),
               ),
             ),
           ],
@@ -214,60 +249,37 @@ class _Cartao extends StatelessWidget {
   }
 }
 
-/// O número — cru, com a unidade como está gravada no banco (unidade_pad).
-/// Nenhuma conversão é aplicada enquanto a unidade real de qtd_sistema não
-/// for confirmada (Passo 0).
+/// O número — cru, sem unidade colada e sem conversão, enquanto a unidade
+/// real de qtd_sistema não for confirmada no banco (Passo 0).
 class _Leitura extends StatelessWidget {
-  const _Leitura({required this.total, required this.unidade});
+  const _Leitura({required this.total});
 
   final double total;
-  final String? unidade;
 
   @override
   Widget build(BuildContext context) {
-    final numero = TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: total),
-      duration: const Duration(milliseconds: 420),
-      curve: Curves.easeOutCubic,
-      builder: (context, v, _) {
-        // Anima só valores inteiros; fração aparece direto no valor final.
-        final ehInteiro = total == total.truncateToDouble();
-        final texto =
-            ehInteiro ? formatarQuantidade(v.roundToDouble()) : formatarQuantidade(total);
-        return Text(
-          texto,
-          style: TemaCamda.numeroStyle(
-            tamanho: 96,
-            negrito: true,
-            altura: 0.9,
-            espacamento: -4.5,
-          ),
-        );
-      },
-    );
-
-    if ((unidade ?? '').isEmpty) {
-      return FittedBox(fit: BoxFit.scaleDown, child: numero);
-    }
-
     return FittedBox(
       fit: BoxFit.scaleDown,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          numero,
-          const SizedBox(width: 12),
-          Text(
-            unidade!,
-            style: TemaCamda.textoStyle(
-              tamanho: 19,
-              peso: 500,
-              cor: TemaCamda.laranja,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: total),
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        builder: (context, v, _) {
+          // Anima só valores inteiros; fração aparece direto no valor final.
+          final ehInteiro = total == total.truncateToDouble();
+          final texto = ehInteiro
+              ? formatarQuantidade(v.roundToDouble())
+              : formatarQuantidade(total);
+          return Text(
+            texto,
+            style: TemaCamda.numeroStyle(
+              tamanho: 96,
+              negrito: true,
+              altura: 0.9,
+              espacamento: -4.5,
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
