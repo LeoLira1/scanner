@@ -80,13 +80,14 @@ class EstoqueService {
         final codigos = par != null ? [codigo, par] : [codigo];
         final linhas = await _lerEstoque(client, codigos);
         if (linhas.isEmpty) return null;
-        return montarResultado(
+        final base = montarResultado(
           codigoLido: codigo,
           linhas: linhas,
           codigosVinculados: const [],
           doCacheLocal: doCache,
           sincronizadoEm: sincronizadoEm,
         );
+        return _comLotes(client, base);
       }
 
       // 2. Todos os códigos do produto (principal + secundários), na forma
@@ -101,7 +102,7 @@ class EstoqueService {
       final linhas = await _lerEstoque(client, codigos);
       if (linhas.isEmpty && produto.nome.isEmpty) return null;
 
-      return montarResultado(
+      final base = montarResultado(
         codigoLido: codigo,
         linhas: linhas,
         codigosVinculados: codigos,
@@ -110,11 +111,100 @@ class EstoqueService {
         doCacheLocal: doCache,
         sincronizadoEm: sincronizadoEm,
       );
+      return _comLotes(client, base, nomeMapa: produto.nome);
     } on ConsultaException {
       rethrow;
     } catch (e) {
       throw ConsultaException('Falha na consulta: $e');
     }
+  }
+
+  /// Acopla ao resultado os lotes do produto na lista de vencimentos.
+  ///
+  /// A lista é um extra sobre o saldo: se a leitura falhar (tabela ausente
+  /// num banco sem o módulo de validade, erro de rede no meio da consulta),
+  /// o saldo continua aparecendo e a tela avisa que a lista não veio — em
+  /// vez de o app inteiro morrer por causa do lote.
+  Future<ResultadoConsulta> _comLotes(
+    LibsqlClient client,
+    ResultadoConsulta base, {
+    String? nomeMapa,
+  }) async {
+    try {
+      final lotes = await _lerLotes(client, [base.nomeProduto, nomeMapa ?? '']);
+      return base.copiarComLotes(lotes);
+    } catch (_) {
+      return base.copiarComLotes(const [], indisponivel: true);
+    }
+  }
+
+  /// Lotes de `validade_lotes` que pertencem ao produto.
+  ///
+  /// `validade_lotes` NÃO tem coluna de código — o vínculo é pelo nome, e os
+  /// nomes vêm do BI com prefixo de código ("100235440 - FUNGICIDA FOX XPRO
+  /// 20L"). Por isso o casamento é por [chaveValidade]/[nomesCombinam], a
+  /// mesma regra do dashboard.
+  Future<List<LoteValidade>> _lerLotes(
+    LibsqlClient client,
+    List<String> nomes,
+  ) async {
+    final chaves = <String>{};
+    for (final n in nomes) {
+      final k = chaveValidade(n);
+      // Nome curto demais casaria com meio catálogo — melhor não mostrar
+      // lote nenhum do que apontar o lote de outro produto.
+      if (k.length >= 6) chaves.add(k);
+    }
+    if (chaves.isEmpty) return const [];
+
+    // Filtros baratos primeiro: o nome inteiro e depois a palavra mais longa
+    // (a marca, em geral: 'ULTIMATO'). Só se os dois falharem é que a tabela
+    // inteira é varrida — o LIKE do SQLite não ignora acento, então nome
+    // acentuado costuma cair na varredura.
+    final filtros = <String>[];
+    for (final c in chaves) {
+      filtros.add(c);
+      final palavras = c.split(' ')..sort((a, b) => b.length.compareTo(a.length));
+      if (palavras.isNotEmpty && palavras.first.length >= 5) {
+        filtros.add(palavras.first);
+      }
+    }
+
+    for (final filtro in filtros) {
+      final stmt = await client.prepare(
+        'SELECT produto, lote, vencimento, quantidade FROM validade_lotes '
+        "WHERE UPPER(TRIM(produto)) LIKE '%' || ? || '%'",
+      );
+      final achados = _mapearLotes(await stmt.query(positional: [filtro]), chaves);
+      if (achados.isNotEmpty) return achados;
+    }
+
+    final stmt = await client.prepare(
+      'SELECT produto, lote, vencimento, quantidade FROM validade_lotes',
+    );
+    return _mapearLotes(await stmt.query(), chaves);
+  }
+
+  /// Converte as linhas lidas em lotes, ficando só com as que casam com o
+  /// produto — o filtro do SQL é aproximado de propósito.
+  static List<LoteValidade> _mapearLotes(
+    Iterable<dynamic> rows,
+    Set<String> chaves,
+  ) {
+    final lotes = <LoteValidade>[];
+    for (final r in rows) {
+      final produto = _texto(r['produto']);
+      final chaveLinha = chaveValidade(produto);
+      if (!chaves.any((c) => nomesCombinam(chaveLinha, c))) continue;
+      final lote = _texto(r['lote']).trim();
+      lotes.add(LoteValidade(
+        lote: lote.isEmpty ? '—' : lote,
+        vencimento: _texto(r['vencimento']).trim(),
+        quantidade: _numero(r['quantidade']),
+        produto: produto,
+      ));
+    }
+    return lotes;
   }
 
   /// True quando a exceção é "tabela não existe".

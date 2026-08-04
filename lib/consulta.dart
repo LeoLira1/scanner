@@ -8,6 +8,104 @@
 ///   próprio em estoque_mestre — o saldo real é a SOMA de todos eles.
 library;
 
+/// Um lote da lista de vencimentos (`validade_lotes` do camda-estoque).
+///
+/// A tabela não tem coluna de código — o vínculo com `estoque_mestre` é pelo
+/// NOME do produto, e os nomes vindos do BI carregam um prefixo de código
+/// ("100235440 - FUNGICIDA FOX XPRO 20L"). Ver [chaveValidade].
+class LoteValidade {
+  /// Identificação do lote, como está gravada ('2411A').
+  final String lote;
+
+  /// Vencimento como está no banco — 'AAAA-MM-DD' (save_validade_lotes grava
+  /// com strftime('%Y-%m-%d')) ou '' quando a planilha veio sem data.
+  final String vencimento;
+
+  /// Quantidade do lote, número cru da planilha de validade (mesma ressalva
+  /// de unidade do qtd_sistema: não é convertida nem rotulada).
+  final double quantidade;
+
+  /// Nome do produto como está em `validade_lotes`, com o prefixo do BI.
+  final String produto;
+
+  const LoteValidade({
+    required this.lote,
+    required this.vencimento,
+    this.quantidade = 0,
+    this.produto = '',
+  });
+
+  /// Vencimento parseado, ou null quando a data está em branco/ilegível.
+  DateTime? get data {
+    final t = vencimento.trim();
+    if (t.isEmpty) return null;
+    return DateTime.tryParse(t.length > 10 ? t.substring(0, 10) : t);
+  }
+
+  /// Dias entre [hoje] e o vencimento: negativo = já vencido, 0 = vence hoje.
+  /// Null quando não há data legível.
+  int? diasAte(DateTime hoje) {
+    final d = data;
+    if (d == null) return null;
+    final h = DateTime(hoje.year, hoje.month, hoje.day);
+    return DateTime(d.year, d.month, d.day).difference(h).inDays;
+  }
+}
+
+const _comAcento = 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ';
+const _semAcento = 'AAAAAEEEEIIIIOOOOOUUUUCNAAAAAEEEEIIIIOOOOOUUUUCN';
+
+/// Prefixo de código do BI nos nomes de `validade_lotes`:
+/// "100235440 - FUNGICIDA FOX XPRO 20L" → "FUNGICIDA FOX XPRO 20L".
+final RegExp _prefixoBi = RegExp(r'^\s*[A-Z0-9\-]{3,20}\s*[-–]\s*(.+)$');
+
+/// Chave de comparação entre o nome de `estoque_mestre` e o de
+/// `validade_lotes`: sem prefixo do BI, sem acento, maiúsculo e com os
+/// espaços colapsados. Mesma regra do `_nome_validade_key` do dashboard.
+String chaveValidade(String nome) {
+  var s = nome.trim().toUpperCase();
+  final semAcentos = StringBuffer();
+  for (final c in s.split('')) {
+    final i = _comAcento.indexOf(c);
+    semAcentos.write(i >= 0 ? _semAcento[i] : c);
+  }
+  // Acento em forma decomposta (letra + marca combinante) não está na tabela
+  // acima; a marca sai aqui.
+  s = semAcentos.toString().replaceAll(RegExp('[\\u0300-\\u036F]'), '');
+  final m = _prefixoBi.firstMatch(s);
+  if (m != null) s = m.group(1)!;
+  return s.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+/// True quando duas chaves de nome apontam para o mesmo produto.
+///
+/// Além da igualdade, aceita uma chave contida na outra (com no mínimo 6
+/// caracteres, como o dashboard faz): a planilha de validade e a de estoque
+/// abreviam o mesmo produto de formas ligeiramente diferentes.
+bool nomesCombinam(String a, String b) {
+  if (a.isEmpty || b.isEmpty) return false;
+  if (a == b) return true;
+  if (a.length < 6 || b.length < 6) return false;
+  return a.contains(b) || b.contains(a);
+}
+
+/// Ordena os lotes na ordem de carregamento (FEFO — *first expired, first
+/// out*): validade mais próxima primeiro. Lotes sem data legível vão para o
+/// fim, porque não dá para afirmar que vencem antes de ninguém.
+List<LoteValidade> ordenarLotesPorVencimento(List<LoteValidade> lotes) {
+  final comData = <LoteValidade>[];
+  final semData = <LoteValidade>[];
+  for (final l in lotes) {
+    (l.data != null ? comData : semData).add(l);
+  }
+  comData.sort((a, b) {
+    final c = a.data!.compareTo(b.data!);
+    return c != 0 ? c : a.lote.compareTo(b.lote);
+  });
+  semData.sort((a, b) => a.lote.compareTo(b.lote));
+  return [...comData, ...semData];
+}
+
 /// Normaliza um código de produto para a forma canônica: UPPER(TRIM()).
 /// Retorna null para valores vazios — mesma regra do _norm_codigo.
 String? normalizarCodigo(String? codigo) {
@@ -77,8 +175,9 @@ class ResultadoConsulta {
   final bool vinculado;
 
   /// Unidade padrão do produto no mapa (mapa_produtos.unidade_pad), como
-  /// está gravada no banco. Exibida junto ao número cru — NENHUMA conversão
-  /// é feita enquanto a unidade real de qtd_sistema não for confirmada.
+  /// está gravada no banco. Não é exibida na tela do produto (o espaço passou
+  /// a ser do lote) e NENHUMA conversão é feita com ela enquanto a unidade
+  /// real de qtd_sistema não for confirmada — ver Passo 0 no README.
   final String? unidadePad;
 
   /// Códigos vinculados ao produto que não têm linha em estoque_mestre.
@@ -86,6 +185,15 @@ class ResultadoConsulta {
 
   /// Última contagem mais recente entre as linhas somadas.
   final String? ultimaContagem;
+
+  /// Lotes do produto na lista de vencimentos (`validade_lotes`), já em
+  /// ordem de carregamento: validade mais próxima primeiro.
+  final List<LoteValidade> lotes;
+
+  /// True quando a lista de vencimentos não pôde ser lida (tabela ausente
+  /// ou consulta falhou). Diferente de [lotes] vazio, que significa "a lista
+  /// existe e este produto não está nela".
+  final bool lotesIndisponiveis;
 
   /// True quando o dado veio do cache local (etapa 4), com o horário da
   /// última sincronização em [sincronizadoEm].
@@ -102,6 +210,8 @@ class ResultadoConsulta {
     this.unidadePad,
     this.codigosSemSaldo = const [],
     this.ultimaContagem,
+    this.lotes = const [],
+    this.lotesIndisponiveis = false,
     this.doCacheLocal = false,
     this.sincronizadoEm,
   });
@@ -111,6 +221,45 @@ class ResultadoConsulta {
 
   /// Ex.: '254185 + US254185' — os códigos que entraram na soma.
   String get codigosSomados => saldos.map((s) => s.codigo).join(' + ');
+
+  /// O lote que deve sair primeiro: o de validade mais próxima (FEFO).
+  ///
+  /// Só lotes com data legível concorrem — um lote sem vencimento na
+  /// planilha não pode ser apontado como "o mais próximo de vencer".
+  LoteValidade? get loteParaCarregar {
+    for (final l in lotes) {
+      if (l.data != null) return l;
+    }
+    return null;
+  }
+
+  /// Quantos outros lotes deste produto estão na lista, além do primeiro.
+  int get outrosLotes {
+    final n = lotes.length - 1;
+    return n > 0 ? n : 0;
+  }
+
+  /// Mesma consulta com os lotes da lista de vencimentos acoplados — o
+  /// serviço só consegue buscá-los depois de saber o nome do produto.
+  ResultadoConsulta copiarComLotes(
+    List<LoteValidade> lotes, {
+    bool indisponivel = false,
+  }) =>
+      ResultadoConsulta(
+        codigoLido: codigoLido,
+        nomeProduto: nomeProduto,
+        categoria: categoria,
+        total: total,
+        saldos: saldos,
+        vinculado: vinculado,
+        unidadePad: unidadePad,
+        codigosSemSaldo: codigosSemSaldo,
+        ultimaContagem: ultimaContagem,
+        lotes: ordenarLotesPorVencimento(lotes),
+        lotesIndisponiveis: indisponivel,
+        doCacheLocal: doCacheLocal,
+        sincronizadoEm: sincronizadoEm,
+      );
 }
 
 /// Monta o resultado a partir das linhas já lidas do banco.
@@ -125,6 +274,8 @@ ResultadoConsulta montarResultado({
   required List<String> codigosVinculados,
   String? nomeMapa,
   String? unidadePad,
+  List<LoteValidade> lotes = const [],
+  bool lotesIndisponiveis = false,
   bool doCacheLocal = false,
   DateTime? sincronizadoEm,
 }) {
@@ -187,6 +338,8 @@ ResultadoConsulta montarResultado({
     unidadePad: unidadePad,
     codigosSemSaldo: semSaldo,
     ultimaContagem: ultima,
+    lotes: ordenarLotesPorVencimento(lotes),
+    lotesIndisponiveis: lotesIndisponiveis,
     doCacheLocal: doCacheLocal,
     sincronizadoEm: sincronizadoEm,
   );
