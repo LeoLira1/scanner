@@ -217,9 +217,14 @@ class TursoService {
     final emAndamento = _bootstrapEmAndamento;
     if (emAndamento != null) return emAndamento;
 
+    // Fora da closure de propósito: um retorno síncrono lá dentro rodaria o
+    // finally (que zera _bootstrapEmAndamento) ANTES da atribuição abaixo,
+    // deixando uma future já concluída com false grudada no campo — e aí
+    // toda tentativa seguinte devolveria esse false para sempre.
+    final client = _client;
+    if (client == null) return Future.value(false);
+
     final futuro = () async {
-      final client = _client;
-      if (client == null) return false;
       try {
         await client.sync().timeout(_timeoutBootstrap);
         _cacheVazio = await _replicaVazia(client);
