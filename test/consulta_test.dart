@@ -135,6 +135,126 @@ void main() {
     });
   });
 
+  group('lista de vencimentos — lote a carregar primeiro', () {
+    test('chaveValidade tira prefixo do BI, acento e espaço extra', () {
+      expect(
+        chaveValidade('100235440 - FUNGICIDA FOX XPRO 20L'),
+        'FUNGICIDA FOX XPRO 20L',
+      );
+      expect(
+        chaveValidade('  herbicida  ultimato sc 20l '),
+        'HERBICIDA ULTIMATO SC 20L',
+      );
+      expect(chaveValidade('INSETICIDA ORQUÍDEA 5L'), 'INSETICIDA ORQUIDEA 5L');
+      // Nome sem prefixo não é mutilado por conter hífen no meio.
+      expect(chaveValidade('HERBICIDA 2,4-D 20L'), 'HERBICIDA 2,4-D 20L');
+    });
+
+    test('nomesCombinam aceita nome contido no outro, não pedaço curto', () {
+      expect(
+        nomesCombinam('HERBICIDA ULTIMATO SC 20L', 'HERBICIDA ULTIMATO SC 20L'),
+        isTrue,
+      );
+      expect(
+        nomesCombinam(
+            'HERBICIDA ULTIMATO SC 20L BALDE', 'HERBICIDA ULTIMATO SC 20L'),
+        isTrue,
+      );
+      expect(nomesCombinam('20L', 'HERBICIDA ULTIMATO SC 20L'), isFalse);
+      expect(nomesCombinam('', 'HERBICIDA ULTIMATO SC 20L'), isFalse);
+    });
+
+    test('ordena por validade mais próxima; sem data vai para o fim', () {
+      final ordenados = ordenarLotesPorVencimento(const [
+        LoteValidade(lote: 'C', vencimento: '2027-01-20'),
+        LoteValidade(lote: 'D', vencimento: ''),
+        LoteValidade(lote: 'A', vencimento: '2026-09-12'),
+        LoteValidade(lote: 'B', vencimento: '2026-12-14'),
+      ]);
+      expect(ordenados.map((l) => l.lote).toList(), ['A', 'B', 'C', 'D']);
+    });
+
+    test('loteParaCarregar é o de validade mais próxima', () {
+      final r = montarResultado(
+        codigoLido: '237191',
+        linhas: const [
+          CodigoSaldo(
+            codigo: '237191',
+            produto: 'HERBICIDA ULTIMATO SC 20L',
+            qtdSistema: 75,
+          ),
+        ],
+        codigosVinculados: const ['237191'],
+        lotes: const [
+          LoteValidade(lote: '2503B', vencimento: '2026-12-14', quantidade: 40),
+          LoteValidade(lote: '2411A', vencimento: '2026-09-12', quantidade: 35),
+        ],
+      );
+      expect(r.loteParaCarregar!.lote, '2411A');
+      expect(r.outrosLotes, 1);
+    });
+
+    test('lote sem data não é apontado como o primeiro a vencer', () {
+      final r = montarResultado(
+        codigoLido: '237191',
+        linhas: const [],
+        codigosVinculados: const ['237191'],
+        nomeMapa: 'HERBICIDA ULTIMATO SC 20L',
+        lotes: const [LoteValidade(lote: '2411A', vencimento: '')],
+      );
+      expect(r.lotes, hasLength(1));
+      expect(r.loteParaCarregar, isNull);
+    });
+
+    test('diasAte: vencido é negativo, hoje é zero', () {
+      final hoje = DateTime(2026, 8, 4);
+      expect(
+        const LoteValidade(lote: 'A', vencimento: '2026-08-04').diasAte(hoje),
+        0,
+      );
+      expect(
+        const LoteValidade(lote: 'A', vencimento: '2026-09-12').diasAte(hoje),
+        39,
+      );
+      expect(
+        const LoteValidade(lote: 'A', vencimento: '2026-08-01').diasAte(hoje),
+        -3,
+      );
+      expect(
+        const LoteValidade(lote: 'A', vencimento: '').diasAte(hoje),
+        isNull,
+      );
+    });
+
+    test('copiarComLotes preserva o resultado e ordena os lotes', () {
+      final base = montarResultado(
+        codigoLido: '237191',
+        linhas: const [
+          CodigoSaldo(
+            codigo: '237191',
+            produto: 'HERBICIDA ULTIMATO SC 20L',
+            qtdSistema: 75,
+            ultimaContagem: '2026-08-04 15:01',
+          ),
+        ],
+        codigosVinculados: const ['237191'],
+      );
+      final comLotes = base.copiarComLotes(const [
+        LoteValidade(lote: '2503B', vencimento: '2026-12-14'),
+        LoteValidade(lote: '2411A', vencimento: '2026-09-12'),
+      ]);
+      expect(comLotes.total, 75);
+      expect(comLotes.nomeProduto, 'HERBICIDA ULTIMATO SC 20L');
+      expect(comLotes.ultimaContagem, '2026-08-04 15:01');
+      expect(comLotes.lotes.first.lote, '2411A');
+      expect(comLotes.lotesIndisponiveis, isFalse);
+
+      final semLista = base.copiarComLotes(const [], indisponivel: true);
+      expect(semLista.lotes, isEmpty);
+      expect(semLista.lotesIndisponiveis, isTrue);
+    });
+  });
+
   group('formatarQuantidade', () {
     test('inteiros sem casas, com milhar', () {
       expect(formatarQuantidade(604), '604');

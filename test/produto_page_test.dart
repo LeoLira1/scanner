@@ -42,7 +42,7 @@ void main() {
   });
 
   testWidgets(
-      'não afirma unidade no número: mostra cru e rotula a unidade do mapa',
+      'as frases de unidade saíram de baixo da quantidade (pedido do Leo)',
       (tester) async {
     final r = montarResultado(
       codigoLido: 'US254185',
@@ -54,31 +54,118 @@ void main() {
     await tester.pumpWidget(_envolver(r));
     await tester.pumpAndSettle();
 
-    // O número aparece sozinho — nada de "604 L" colado, que afirmaria
-    // litros quando qtd_sistema conta embalagens (ver Passo 0).
+    // O número segue cru — nada de "604 L" colado, que afirmaria litros
+    // quando qtd_sistema conta embalagens (ver Passo 0 no README).
     expect(find.text('604'), findsOneWidget);
     expect(find.text('L'), findsNothing);
     expect(
       find.text('valor cru do sistema · conversão de unidade não confirmada'),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('unidade gravada no mapa: L'), findsOneWidget);
+    expect(find.textContaining('unidade gravada no mapa'), findsNothing);
+    expect(
+      find.text('CÓDIGO NÃO VINCULADO — O TOTAL PODE ESTAR INCOMPLETO'),
+      findsNothing,
+    );
   });
 
-  testWidgets('sem unidade_pad não inventa rótulo de unidade', (tester) async {
+  testWidgets('mostra o lote de validade mais próxima como o primeiro a sair',
+      (tester) async {
+    final hoje = DateTime.now();
+    final proximo = hoje.add(const Duration(days: 39));
+    final depois = hoje.add(const Duration(days: 132));
+    String iso(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
     final r = montarResultado(
-      codigoLido: 'US254185',
-      linhas: const [linha403],
-      codigosVinculados: const ['US254185'],
+      codigoLido: '237191',
+      linhas: const [
+        CodigoSaldo(
+          codigo: '237191',
+          produto: 'HERBICIDA ULTIMATO SC 20L',
+          categoria: 'HERBICIDAS',
+          qtdSistema: 75,
+        ),
+      ],
+      codigosVinculados: const ['237191'],
+      lotes: [
+        LoteValidade(lote: '2503B', vencimento: iso(depois), quantidade: 40),
+        LoteValidade(lote: '2411A', vencimento: iso(proximo), quantidade: 35),
+      ],
     );
 
     await tester.pumpWidget(_envolver(r));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('unidade gravada no mapa'), findsNothing);
+    expect(find.text('CARREGAR PRIMEIRO'), findsOneWidget);
+    expect(find.text('2411A'), findsOneWidget);
+    expect(find.text('2503B'), findsNothing);
+    expect(find.textContaining('faltam 39 dias'), findsOneWidget);
+    expect(find.textContaining('mais 1 lote na lista'), findsOneWidget);
   });
 
-  testWidgets('código não vinculado exibe o aviso de total incompleto',
+  testWidgets('lote já vencido é mostrado como vencido', (tester) async {
+    final ontem = DateTime.now().subtract(const Duration(days: 1));
+    final r = montarResultado(
+      codigoLido: '237191',
+      linhas: const [
+        CodigoSaldo(
+          codigo: '237191',
+          produto: 'HERBICIDA ULTIMATO SC 20L',
+          qtdSistema: 75,
+        ),
+      ],
+      codigosVinculados: const ['237191'],
+      lotes: [
+        LoteValidade(
+          lote: '2308C',
+          vencimento:
+              '${ontem.year}-${ontem.month.toString().padLeft(2, '0')}-${ontem.day.toString().padLeft(2, '0')}',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(_envolver(r));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2308C'), findsOneWidget);
+    expect(find.textContaining('vencido há 1 dia'), findsOneWidget);
+  });
+
+  testWidgets('produto fora da lista de vencimentos diz isso por escrito',
+      (tester) async {
+    final r = montarResultado(
+      codigoLido: '254185',
+      linhas: const [linha201],
+      codigosVinculados: const ['254185'],
+    );
+
+    await tester.pumpWidget(_envolver(r));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('produto não está na lista de vencimentos'),
+      findsOneWidget,
+    );
+    expect(find.text('CARREGAR PRIMEIRO'), findsNothing);
+  });
+
+  testWidgets('falha ao ler a lista não é confundida com "sem lote"',
+      (tester) async {
+    final r = montarResultado(
+      codigoLido: '254185',
+      linhas: const [linha201],
+      codigosVinculados: const ['254185'],
+      lotesIndisponiveis: true,
+    );
+
+    await tester.pumpWidget(_envolver(r));
+    await tester.pumpAndSettle();
+
+    expect(find.text('lista de vencimentos indisponível'), findsOneWidget);
+  });
+
+  testWidgets('código não vinculado mantém a ressalva de total incompleto',
       (tester) async {
     final r = montarResultado(
       codigoLido: 'US254185',
@@ -91,12 +178,12 @@ void main() {
 
     expect(find.text('403'), findsOneWidget);
     expect(
-      find.text('CÓDIGO NÃO VINCULADO — O TOTAL PODE ESTAR INCOMPLETO'),
+      find.text('código não vinculado no mapa · o total pode estar incompleto'),
       findsOneWidget,
     );
   });
 
-  testWidgets('código vinculado não exibe o aviso', (tester) async {
+  testWidgets('código vinculado não exibe a ressalva', (tester) async {
     final r = montarResultado(
       codigoLido: '254185',
       linhas: const [linha201, linha403],
@@ -107,7 +194,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('CÓDIGO NÃO VINCULADO — O TOTAL PODE ESTAR INCOMPLETO'),
+      find.textContaining('o total pode estar incompleto'),
       findsNothing,
     );
   });

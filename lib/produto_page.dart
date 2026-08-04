@@ -10,9 +10,12 @@ import 'tema.dart';
 ///   1. Nome do produto
 ///   2. Quantidade, grande (número cru — sem conversão de unidade enquanto
 ///      a unidade real de qtd_sistema não for confirmada no banco)
-///   3. Quais códigos foram somados — é o que dá confiança no número
-///   4. Data da última contagem
-///   5. Origem do dado (banco ao vivo / cache local com horário)
+///   3. Lote a carregar primeiro — o de validade mais próxima (FEFO), vindo
+///      da lista de vencimentos (pedido do Leo: é o que ele precisa saber
+///      logo abaixo da quantidade, na hora de carregar)
+///   4. Quais códigos foram somados — é o que dá confiança no número
+///   5. Data da última contagem
+///   6. Origem do dado (banco ao vivo / cache local com horário)
 class ProdutoPage extends StatelessWidget {
   const ProdutoPage({super.key, required this.resultado});
 
@@ -133,52 +136,19 @@ class _Cartao extends StatelessWidget {
           // qtd_sistema conta EMBALAGENS, não litros. Já o unidade_pad do
           // mapa é um selectbox preenchido à mão, com default 'L'. Escrever
           // "604 L" ao lado do número afirmaria as duas coisas erradas de
-          // uma vez. Enquanto o Passo 0 não for confirmado no banco, o
-          // número aparece cru e a unidade gravada vem rotulada como o que
-          // é: um campo do mapa, não a unidade deste número.
+          // uma vez — por isso o número segue cru, sem conversão, até o
+          // Passo 0 ser confirmado no banco. As duas linhas que explicavam
+          // isso saíram daqui a pedido do Leo (o espaço passou a ser do
+          // lote); a ressalva continua registrada no README.
           const SizedBox(height: 30),
           _Leitura(total: r.total),
 
-          // Aviso: código sem vínculo no mapa — não existe grupo de códigos
-          // para somar, então o total pode estar incompleto.
-          if (r.avisoNaoVinculado) ...[
-            const SizedBox(height: 14),
-            Text(
-              'CÓDIGO NÃO VINCULADO — O TOTAL PODE ESTAR INCOMPLETO',
-              textAlign: TextAlign.center,
-              style: TemaCamda.numeroStyle(
-                tamanho: 11,
-                cor: TemaCamda.laranja,
-                espacamento: 1.2,
-                altura: 1.5,
-              ),
-            ),
-          ],
-
-          // Slot da "equivalência" da maquete: por enquanto carrega o
-          // aviso de que a conversão ainda não foi confirmada. Quando o
-          // Passo 0 fechar, é aqui que entra "12.080 L em estoque".
-          const SizedBox(height: 8),
-          Text(
-            'valor cru do sistema · conversão de unidade não confirmada',
-            textAlign: TextAlign.center,
-            style: TemaCamda.numeroStyle(
-              tamanho: 12,
-              cor: TemaCamda.textoFraco,
-              altura: 1.4,
-            ),
-          ),
-          if ((r.unidadePad ?? '').isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              'unidade gravada no mapa: ${r.unidadePad}',
-              textAlign: TextAlign.center,
-              style: TemaCamda.numeroStyle(
-                tamanho: 11,
-                cor: const Color(0xFF4A5058),
-              ),
-            ),
-          ],
+          // Logo abaixo do número, no lugar onde antes ficavam os avisos de
+          // unidade: o lote que deve sair primeiro (FEFO), vindo da lista de
+          // vencimentos. É a informação que o Leo usa de pé, na hora de
+          // carregar — validade mais próxima é a que embarca antes.
+          const SizedBox(height: 14),
+          _LoteParaCarregar(resultado: r),
 
           // 3. Quais códigos foram somados — a confiança no número.
           const SizedBox(height: 18),
@@ -285,6 +255,134 @@ class _Leitura extends StatelessWidget {
   }
 }
 
+/// O lote a carregar primeiro — FEFO: o de validade mais próxima sai antes.
+///
+/// Ocupa o espaço que antes trazia os avisos de unidade. Quando não há lote
+/// para apontar, o motivo aparece escrito: "não está na lista" (a lista foi
+/// lida e o produto não está nela) é diferente de "lista indisponível" (não
+/// deu para ler) — some a linha e o galpão não sabe se pode confiar.
+class _LoteParaCarregar extends StatelessWidget {
+  const _LoteParaCarregar({required this.resultado});
+
+  final ResultadoConsulta resultado;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = resultado;
+
+    if (r.lotesIndisponiveis) {
+      return _aviso('lista de vencimentos indisponível');
+    }
+    if (r.lotes.isEmpty) {
+      return _aviso('produto não está na lista de vencimentos');
+    }
+
+    final lote = r.loteParaCarregar;
+    if (lote == null) {
+      // Há lote na lista, mas nenhum com data legível — dá para mostrar qual
+      // é, não dá para afirmar que ele é o primeiro a vencer.
+      return Column(
+        children: [
+          _rotulo('LOTE NA LISTA'),
+          const SizedBox(height: 6),
+          _numeroLote(r.lotes.first.lote, TemaCamda.texto),
+          const SizedBox(height: 6),
+          _detalhe('sem data de vencimento na lista'),
+        ],
+      );
+    }
+
+    final dias = lote.diasAte(DateTime.now())!;
+    final cor = dias < 0
+        ? TemaCamda.vermelho
+        : dias <= 30
+            ? TemaCamda.laranja
+            : TemaCamda.texto;
+
+    final segunda = StringBuffer('vence ${_formatarData(lote.vencimento)}');
+    segunda.write(' · ${_situacaoValidade(dias)}');
+
+    final terceira = <String>[];
+    if (lote.quantidade > 0) {
+      terceira.add('${formatarQuantidade(lote.quantidade)} no lote');
+    }
+    if (r.outrosLotes > 0) {
+      terceira.add(r.outrosLotes == 1
+          ? 'mais 1 lote na lista'
+          : 'mais ${r.outrosLotes} lotes na lista');
+    }
+
+    return Column(
+      children: [
+        _rotulo('CARREGAR PRIMEIRO'),
+        const SizedBox(height: 6),
+        _numeroLote(lote.lote, cor),
+        const SizedBox(height: 6),
+        _detalhe(segunda.toString(), cor: dias <= 30 ? cor : null),
+        if (terceira.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          _detalhe(terceira.join(' · '), tamanho: 11),
+        ],
+      ],
+    );
+  }
+
+  Widget _rotulo(String texto) => Text(
+        texto,
+        textAlign: TextAlign.center,
+        style: TemaCamda.numeroStyle(
+          tamanho: 10,
+          cor: const Color(0xFF4A5058),
+          espacamento: 1.2,
+        ),
+      );
+
+  Widget _numeroLote(String lote, Color cor) => FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          lote,
+          textAlign: TextAlign.center,
+          style: TemaCamda.numeroStyle(
+            tamanho: 26,
+            negrito: true,
+            cor: cor,
+            espacamento: 1,
+          ),
+        ),
+      );
+
+  Widget _detalhe(String texto, {Color? cor, double tamanho = 12}) => Text(
+        texto,
+        textAlign: TextAlign.center,
+        style: TemaCamda.numeroStyle(
+          tamanho: tamanho,
+          cor: cor ?? TemaCamda.textoFraco,
+          altura: 1.4,
+        ),
+      );
+
+  Widget _aviso(String texto) => Text(
+        texto,
+        textAlign: TextAlign.center,
+        style: TemaCamda.numeroStyle(
+          tamanho: 12,
+          cor: TemaCamda.textoFraco,
+          altura: 1.4,
+        ),
+      );
+}
+
+/// 'vencido há 3 dias' / 'vence hoje' / 'faltam 39 dias'.
+String _situacaoValidade(int dias) {
+  if (dias < 0) {
+    final d = -dias;
+    return d == 1 ? 'vencido há 1 dia' : 'vencido há $d dias';
+  }
+  if (dias == 0) return 'vence hoje';
+  if (dias == 1) return 'vence amanhã';
+  return 'faltam $dias dias';
+}
+
 class _CodigosSomados extends StatelessWidget {
   const _CodigosSomados({required this.resultado});
 
@@ -328,6 +426,22 @@ class _CodigosSomados extends StatelessWidget {
             style: TemaCamda.numeroStyle(
               tamanho: 11,
               cor: TemaCamda.textoFraco,
+            ),
+          ),
+        ],
+        // O banner laranja de "total incompleto" saiu do lugar de destaque
+        // (agora ocupado pelo lote), mas a ressalva continua aqui embaixo,
+        // discreta: sem vínculo no mapa não há grupo de códigos para somar,
+        // e o número grande pode estar contando só uma parte.
+        if (r.avisoNaoVinculado) ...[
+          const SizedBox(height: 6),
+          Text(
+            'código não vinculado no mapa · o total pode estar incompleto',
+            textAlign: TextAlign.center,
+            style: TemaCamda.numeroStyle(
+              tamanho: 11,
+              cor: TemaCamda.textoFraco,
+              altura: 1.4,
             ),
           ),
         ],

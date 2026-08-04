@@ -47,11 +47,51 @@ produto em `mapa_produtos`/`mapa_produtos_codigos` e **soma o
 nenhum produto do mapa, o app mostra o saldo da linha única com um aviso
 de que o total pode estar incompleto.
 
+## Lote a carregar primeiro (FEFO)
+
+Logo abaixo da quantidade, a tela do produto mostra **qual lote deve sair
+primeiro**: o de **validade mais próxima** (FEFO — *first expired, first
+out*), lido da lista de vencimentos (`validade_lotes`, a mesma planilha que
+alimenta os alertas de validade do camda-estoque).
+
+```
+        CARREGAR PRIMEIRO
+             2411A
+  vence 12/09/2026 · faltam 39 dias
+     35 no lote · mais 2 lotes na lista
+```
+
+O número do lote muda de cor conforme a urgência: **laranja** faltando 30
+dias ou menos, **vermelho** se já venceu.
+
+**Como o lote é encontrado:** `validade_lotes` não tem coluna de código — o
+vínculo com `estoque_mestre` é pelo **nome do produto**, e os nomes vindos
+do BI trazem um prefixo de código (`100235440 - FUNGICIDA FOX XPRO 20L`). O
+app compara pela mesma chave do dashboard (`_nome_validade_key`): sem o
+prefixo, sem acento, maiúsculo, aceitando um nome contido no outro. A
+consulta tenta primeiro um filtro barato no SQL (nome inteiro, depois a
+palavra mais longa) e só varre a tabela quando os dois falham — o `LIKE` do
+SQLite não ignora acento.
+
+Quando não há lote para apontar, o motivo aparece escrito, porque os dois
+casos são diferentes:
+
+- `produto não está na lista de vencimentos` — a lista foi lida e este
+  produto não está nela;
+- `lista de vencimentos indisponível` — não deu para ler a lista (banco sem
+  a tabela, falha na consulta). O saldo continua aparecendo normalmente.
+
+Lote sem data de vencimento na planilha nunca é apontado como "o primeiro a
+vencer": ele aparece rotulado como `sem data de vencimento na lista`.
+
 ## Passo 0 — unidades (ainda não confirmado no banco)
 
-O app exibe o **número cru** de `qtd_sistema`, sem conversão. A unidade
-não vai colada no número; ela aparece separada e rotulada como o que é
-(`unidade gravada no mapa: L`). O motivo:
+O app exibe o **número cru** de `qtd_sistema`, sem conversão, e **nenhuma
+unidade vai colada no número**. As duas linhas que explicavam isso na tela
+(`valor cru do sistema · conversão de unidade não confirmada` e `unidade
+gravada no mapa: L`) foram retiradas a pedido do Leo — aquele espaço, logo
+abaixo da quantidade, passou a ser do lote a carregar. A ressalva continua
+valendo e está registrada aqui. O motivo:
 
 **`qtd_sistema` conta embalagens, não litros** — três indícios no
 `camda-estoque`:
@@ -110,9 +150,9 @@ fixo. E o número gravado em `mapa_posicoes.quantidade` vem da
 distribuição proporcional de `qtd_sistema`, sem olhar para esse texto —
 ou seja, o rótulo nunca influenciou a grandeza.
 
-Quando a confirmação vier, a conversão entra no slot que hoje mostra
-"valor cru do sistema": número convertido grande, valor cru pequeno
-embaixo (como na maquete `tag-estoque.html`).
+Quando a confirmação vier, a conversão entra no próprio número grande:
+valor convertido em destaque e valor cru pequeno embaixo (como na maquete
+`tag-estoque.html`), sem tomar o espaço do lote.
 
 ## Cache local
 
