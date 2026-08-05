@@ -149,6 +149,10 @@ class _Cartao extends StatelessWidget {
           // carregar — validade mais próxima é a que embarca antes.
           const SizedBox(height: 14),
           _LoteParaCarregar(resultado: r),
+          if (r.outrosLotes > 0) ...[
+            const SizedBox(height: 12),
+            _BotaoProximoLote(resultado: r),
+          ],
 
           // 3. Quais códigos foram somados — a confiança no número.
           const SizedBox(height: 18),
@@ -370,6 +374,163 @@ class _LoteParaCarregar extends StatelessWidget {
           altura: 1.4,
         ),
       );
+}
+
+/// Botão que abre o bottom sheet com os lotes seguintes ao que está sendo
+/// carregado. Aparece apenas quando há mais de um lote na lista.
+class _BotaoProximoLote extends StatelessWidget {
+  const _BotaoProximoLote({required this.resultado});
+
+  final ResultadoConsulta resultado;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = resultado.outrosLotes;
+    return OutlinedButton.icon(
+      onPressed: () => showModalBottomSheet(
+        context: context,
+        backgroundColor: TemaCamda.card,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        isScrollControlled: true,
+        builder: (_) => _ProximosLotesSheet(resultado: resultado),
+      ),
+      icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+      label: Text(
+        n == 1 ? 'próximo lote' : 'próximos $n lotes',
+        style: TemaCamda.numeroStyle(tamanho: 12, espacamento: 0.4),
+      ),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: TemaCamda.textoFraco,
+        side: const BorderSide(color: TemaCamda.borda),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+}
+
+/// Bottom sheet com todos os lotes da lista, exceto o primeiro (que já está
+/// exibido no card principal).
+class _ProximosLotesSheet extends StatelessWidget {
+  const _ProximosLotesSheet({required this.resultado});
+
+  final ResultadoConsulta resultado;
+
+  @override
+  Widget build(BuildContext context) {
+    final lotes = resultado.lotes.skip(1).toList();
+    return SafeArea(
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.5,
+        minChildSize: 0.3,
+        maxChildSize: 0.85,
+        builder: (context, controller) => ListView(
+          controller: controller,
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: TemaCamda.borda,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 22),
+            Center(
+              child: Text(
+                lotes.length == 1 ? 'PRÓXIMO LOTE' : 'PRÓXIMOS LOTES',
+                style: TemaCamda.numeroStyle(
+                  tamanho: 10,
+                  cor: TemaCamda.textoFraco,
+                  espacamento: 1.4,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            ...lotes.map((lote) => _ItemLote(lote: lote)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Uma linha de lote no bottom sheet: número do lote, vencimento e quantidade.
+class _ItemLote extends StatelessWidget {
+  const _ItemLote({required this.lote});
+
+  final LoteValidade lote;
+
+  @override
+  Widget build(BuildContext context) {
+    final dias = lote.diasAte(DateTime.now());
+    final cor = dias == null
+        ? TemaCamda.texto
+        : dias < 0
+            ? TemaCamda.vermelho
+            : dias <= 30
+                ? TemaCamda.laranja
+                : TemaCamda.texto;
+
+    final detalhe = <String>[];
+    if (lote.vencimento.isNotEmpty) {
+      detalhe.add('vence ${_formatarData(lote.vencimento)}');
+    }
+    if (dias != null) detalhe.add(_situacaoValidade(dias));
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  lote.lote,
+                  style: TemaCamda.numeroStyle(
+                    tamanho: 20,
+                    negrito: true,
+                    cor: cor,
+                    espacamento: 0.5,
+                  ),
+                ),
+                if (detalhe.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    detalhe.join(' · '),
+                    style: TemaCamda.numeroStyle(
+                      tamanho: 12,
+                      cor: dias != null && dias <= 30 ? cor : TemaCamda.textoFraco,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (lote.quantidade > 0) ...[
+            const SizedBox(width: 12),
+            Text(
+              formatarQuantidade(lote.quantidade),
+              style: TemaCamda.numeroStyle(
+                tamanho: 22,
+                negrito: true,
+                cor: TemaCamda.textoFraco,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 /// 'vencido há 3 dias' / 'vence hoje' / 'faltam 39 dias'.
