@@ -24,6 +24,7 @@ class _ScannerPageState extends State<ScannerPage> {
   );
 
   bool    _consultando = false;
+  bool    _lido        = false;
   String? _erro;
 
   // Cooldown do último código lido: o mesmo QR só reconsulta depois de uns
@@ -57,8 +58,16 @@ class _ScannerPageState extends State<ScannerPage> {
     _ultimaLeitura = agora;
 
     setState(() {
+      _lido = true;
+      _erro = null;
+    });
+
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+
+    setState(() {
+      _lido        = false;
       _consultando = true;
-      _erro        = null;
     });
 
     ResultadoConsulta? resultado;
@@ -157,6 +166,16 @@ class _ScannerPageState extends State<ScannerPage> {
             ),
           ),
 
+          // Ícone de confirmação quando o QR é lido.
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: _lido
+                ? const IgnorePointer(
+                    child: Center(child: _IconeConfirmacao()),
+                  )
+                : const SizedBox.shrink(),
+          ),
+
           // Rodapé: status/erro + atalho para a digitação manual.
           Align(
             alignment: Alignment.bottomCenter,
@@ -225,6 +244,59 @@ class _Faixa extends StatelessWidget {
         texto,
         textAlign: TextAlign.center,
         style: TemaCamda.textoStyle(tamanho: 13, cor: cor, altura: 1.4),
+      ),
+    );
+  }
+}
+
+class _IconeConfirmacao extends StatefulWidget {
+  const _IconeConfirmacao();
+
+  @override
+  State<_IconeConfirmacao> createState() => _IconeConfirmacaoState();
+}
+
+class _IconeConfirmacaoState extends State<_IconeConfirmacao>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ac;
+  late final Animation<double> _escala;
+
+  @override
+  void initState() {
+    super.initState();
+    _ac = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _escala = CurvedAnimation(parent: _ac, curve: Curves.elasticOut);
+    _ac.forward();
+  }
+
+  @override
+  void dispose() {
+    _ac.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _escala,
+      child: Container(
+        width: 110,
+        height: 110,
+        decoration: BoxDecoration(
+          color: TemaCamda.verde,
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: TemaCamda.verde.withValues(alpha: 0.45),
+              blurRadius: 30,
+              spreadRadius: 6,
+            ),
+          ],
+        ),
+        child: const Icon(Icons.check_rounded, color: Colors.white, size: 66),
       ),
     );
   }
