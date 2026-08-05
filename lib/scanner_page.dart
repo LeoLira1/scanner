@@ -18,9 +18,19 @@ class ScannerPage extends StatefulWidget {
 
 class _ScannerPageState extends State<ScannerPage> {
   final MobileScannerController _controller = MobileScannerController(
-    // Timeout entre detecções: evita rajada de leituras iguais enquanto a
-    // câmera continua apontada para o mesmo QR.
-    detectionTimeoutMs: 700,
+    // Timeout curto entre detecções: a rajada de leituras iguais já é barrada
+    // pelo cooldown de 3 s por código em _aoDetectar, então aqui vale priorizar
+    // a resposta rápida ao apontar a câmera.
+    detectionTimeoutMs: 150,
+    // Só os formatos que o app usa — reduz o trabalho do ML Kit por frame.
+    formats: const [
+      BarcodeFormat.qrCode,
+      BarcodeFormat.code128,
+      BarcodeFormat.ean13,
+    ],
+    // Aproxima sozinho quando o código está pequeno/distante no frame.
+    autoZoom: true,
+    cameraResolution: const Size(1280, 720),
   );
 
   bool    _consultando = false;
