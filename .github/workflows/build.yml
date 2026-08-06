@@ -81,11 +81,15 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
 
-      # Só a main vira Release: nas branches de trabalho o APK fica no
-      # artifact acima. Publicar cada push como "latest" faria quem baixa
-      # pela página de releases pegar código ainda não revisado.
+      # Release só nas branches de integração — hoje os PRs são mesclados
+      # em claude/scanner-qr-barcode-app-9ld9nu, que é o trunk de fato
+      # (a main está parada no PR #3). Numa branch de trabalho o APK fica
+      # só no artifact acima: publicar cada push como "latest" faria quem
+      # baixa pela página de releases pegar código ainda não revisado.
       - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
+        if: >-
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/claude/scanner-qr-barcode-app-9ld9nu'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "build-${{ github.run_number }}"
