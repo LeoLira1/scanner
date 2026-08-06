@@ -18,9 +18,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final _codigoCtrl = TextEditingController();
 
-  bool    _configurado = false;
-  bool    _carregando  = true;
-  bool    _consultando = false;
+  bool    _configurado   = false;
+  bool    _carregando    = true;
+  bool    _consultando   = false;
+  bool    _sincronizando = false;
   String? _erro;
 
   @override
@@ -49,6 +50,40 @@ class _HomePageState extends State<HomePage> {
       MaterialPageRoute(builder: (_) => const ConfiguracaoPage()),
     );
     _verificarConfiguracao();
+  }
+
+  /// Sincronizar direto da tela principal: atualizar o cache é a operação
+  /// do dia a dia (o estoque muda o tempo todo), não uma configuração —
+  /// não faz sentido obrigar a entrar em ⚙️ para isso.
+  Future<void> _sincronizar() async {
+    if (_sincronizando) return;
+    setState(() => _sincronizando = true);
+
+    final servico = TursoService();
+    final ok = await servico.sincronizar();
+
+    if (!mounted) return;
+    setState(() => _sincronizando = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Sincronizado com o banco online ✓'
+          : 'Não foi possível sincronizar — '
+              '${servico.ultimoErroSync ?? 'verifique a conexão'}'),
+      backgroundColor:
+          ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
+      duration: Duration(seconds: ok ? 2 : 6),
+    ));
+  }
+
+  /// O toque abre o menu de acessibilidade/tooltip com a data da última
+  /// sincronização — a informação que decide se vale sincronizar de novo.
+  String _tooltipSync() {
+    if (_sincronizando) return 'Sincronizando...';
+    final quando = TursoService().ultimaSincronizacao;
+    if (quando == null) return 'Sincronizar (nunca sincronizado)';
+    String dois(int n) => n.toString().padLeft(2, '0');
+    return 'Sincronizar — última: ${dois(quando.day)}/${dois(quando.month)} '
+        '${dois(quando.hour)}:${dois(quando.minute)}';
   }
 
   Future<void> _abrirScanner() async {
@@ -99,6 +134,21 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Scanner CAMDA'),
         actions: [
+          if (_configurado)
+            IconButton(
+              icon: _sincronizando
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: TemaCamda.verde,
+                      ),
+                    )
+                  : const Icon(Icons.sync, size: 20),
+              tooltip: _tooltipSync(),
+              onPressed: _sincronizando ? null : _sincronizar,
+            ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Configuração do Banco',
