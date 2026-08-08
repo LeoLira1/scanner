@@ -30,11 +30,45 @@ Duas formas, sempre disponíveis:
 - **Câmera** (`mobile_scanner` / ML Kit): lê QR e código de barras 1D ao
   vivo, com lanterna para os cantos escuros do galpão. Aceita tanto um
   código puro (`US254185`) quanto uma URL que contenha `p=`.
-- **Digitação manual**: o fallback quando o QR está sujo ou rasgado — e a
-  forma de testar o app inteiro sem depender da câmera.
+- **Digitação manual**: aceita o **código** (`254185`, `US254185`) **ou o
+  nome do produto** (`boral 20l`) — o fallback quando o QR está sujo ou
+  rasgado, e a forma de testar o app inteiro sem depender da câmera.
 
 A permissão de câmera é pedida pelo Android na primeira leitura; se for
 negada, a tela explica e oferece a digitação manual.
+
+## Busca pelo nome do produto
+
+Mesma ideia do campo de busca do [camdaapp](https://github.com/LeoLira1/camdaapp)
+(a tela **Estoque Mestre**), adaptada ao scanner: o campo da tela inicial é
+um só e entende as duas coisas.
+
+- Texto de **uma palavra com dígito e sem espaço** (`254185`, `US254185`) é
+  tratado como código e vai pelo caminho de sempre: mapa de produtos, soma
+  dos códigos vinculados, lista de vencimentos.
+- Qualquer outra coisa é **nome**. Se o código digitado não existir, o app
+  ainda tenta o nome antes de dizer "não encontrado" — a heurística nunca é
+  a última palavra.
+
+Como o nome é procurado:
+
+- **as palavras valem em qualquer ordem**, com E entre elas: `boral 20`
+  acha `HERBICIDA BORAL 500 SC 20L`, e `boral fox` não acha nada;
+- **acento não atrapalha** — `orquidea` acha `INSETICIDA ORQUÍDEA 5L`. No
+  SQL o `LIKE` do SQLite não ignora acento, então a consulta tenta primeiro
+  o filtro barato com a palavra mais longa e só varre `estoque_mestre`
+  quando ele não traz nada (mesma tática da lista de vencimentos);
+- **mínimo de 3 letras** — com menos que isso meio galpão casa e a lista
+  não ajuda ninguém;
+- **um produto aparece uma vez só**: os códigos com o mesmo nome (`254185`
+  e `US254185`) entram agrupados, com o saldo somado.
+
+Um único resultado abre direto a tela do produto. Vários abrem a lista, com
+nome, códigos, categoria e saldo; ao tocar, **a consulta completa é refeita
+pelo código** — o número da lista é uma prévia, quem manda é a tela do
+produto (que resolve `mapa_produtos` e a lista de vencimentos). Passando de
+60 itens, a tela avisa para acrescentar uma palavra em vez de rolar o
+catálogo inteiro.
 
 ## Regra crítica: múltiplos códigos
 

@@ -35,23 +35,7 @@ class EstoqueService {
     }
 
     final turso = TursoService();
-    if (!await turso.garantirConexao()) {
-      final configurado = await turso.credenciaisConfiguradas();
-      throw ConsultaException(configurado
-          ? 'Sem conexão com o banco — verifique a internet.'
-          : 'Configure URL e token do banco em ⚙️.');
-    }
-    // Cache local recém-criado: espera a carga inicial. Consultar a replica
-    // vazia responderia "não encontrado" para qualquer código — erro
-    // silencioso, justamente o que não pode acontecer aqui.
-    if (!await turso.garantirDadosProntos()) {
-      throw ConsultaException(
-        'O cache local ainda está vazio e não deu para baixar os dados '
-        '(${turso.ultimoErroSync ?? 'sem conexão'}). '
-        'Conecte à internet e toque em Sincronizar em ⚙️.',
-      );
-    }
-    final client = turso.client!;
+    final client = await _clientePronto(turso);
 
     // Dado servido do arquivo local é rotulado na tela do produto com o
     // horário da última sincronização.
@@ -117,6 +101,98 @@ class EstoqueService {
     } catch (e) {
       throw ConsultaException('Falha na consulta: $e');
     }
+  }
+
+  /// Busca produtos pelo NOME — o caminho de quem tem o produto na mão mas
+  /// não tem etiqueta legível (o mesmo campo de busca do app do galpão, o
+  /// camdaapp, onde dá para procurar por "boral" em vez do código).
+  ///
+  /// As palavras do termo valem em qualquer ordem e acento não atrapalha
+  /// ('orquidea' acha 'ORQUÍDEA'). Códigos do mesmo produto vêm agrupados
+  /// numa linha só, com o saldo somado. Devolve lista vazia quando o termo
+  /// é curto demais ([minLetrasBusca]) ou nada casa; lança
+  /// [ConsultaException] quando não há conexão ou a consulta falha.
+  Future<List<ProdutoEncontrado>> buscarPorNome(
+    String termo, {
+    int limite = limiteBusca,
+  }) async {
+    final palavras = palavrasBusca(termo);
+    if (palavras.join().length < minLetrasBusca) return const [];
+
+    final client = await _clientePronto(TursoService());
+    try {
+      // Filtro barato primeiro: a palavra mais longa do termo (a marca, em
+      // geral) no SQL. Se ele não render casamento nenhum, varre a tabela —
+      // o `LIKE` do SQLite não ignora acento, então 'ORQUIDEA' não acharia
+      // 'ORQUÍDEA' e o produto sumiria da busca sem a varredura. O
+      // casamento final é sempre em Dart, por [nomeCasaBusca].
+      final maisLonga = palavras.reduce((a, b) => b.length > a.length ? b : a);
+      if (maisLonga.length >= minLetrasBusca) {
+        final linhas = await _lerEstoqueComoLike(client, maisLonga);
+        final achados = buscarNasLinhas(termo, linhas, limite: limite);
+        if (achados.isNotEmpty) return achados;
+      }
+
+      final stmt = await client.prepare(_colunasEstoque);
+      final linhas = _mapearLinhas(await stmt.query());
+      return buscarNasLinhas(termo, linhas, limite: limite);
+    } on ConsultaException {
+      rethrow;
+    } catch (e) {
+      throw ConsultaException('Falha na busca: $e');
+    }
+  }
+
+  static const _colunasEstoque =
+      'SELECT codigo, produto, categoria, qtd_sistema, ultima_contagem '
+      'FROM estoque_mestre';
+
+  Future<List<CodigoSaldo>> _lerEstoqueComoLike(
+    LibsqlClient client,
+    String pedaco,
+  ) async {
+    final stmt = await client.prepare(
+      "$_colunasEstoque WHERE UPPER(TRIM(produto)) LIKE '%' || ? || '%'",
+    );
+    return _mapearLinhas(await stmt.query(positional: [pedaco]));
+  }
+
+  static List<CodigoSaldo> _mapearLinhas(Iterable<dynamic> rows) {
+    final linhas = <CodigoSaldo>[];
+    for (final r in rows) {
+      final cod = normalizarCodigo(_texto(r['codigo']));
+      if (cod == null) continue;
+      linhas.add(CodigoSaldo(
+        codigo: cod,
+        produto: _texto(r['produto']),
+        categoria: _texto(r['categoria']).trim(),
+        qtdSistema: _numero(r['qtd_sistema']),
+        ultimaContagem: _texto(r['ultima_contagem']),
+      ));
+    }
+    return linhas;
+  }
+
+  /// Conexão viva e com dados prontos, ou [ConsultaException] com a
+  /// mensagem que a tela mostra.
+  Future<LibsqlClient> _clientePronto(TursoService turso) async {
+    if (!await turso.garantirConexao()) {
+      final configurado = await turso.credenciaisConfiguradas();
+      throw ConsultaException(configurado
+          ? 'Sem conexão com o banco — verifique a internet.'
+          : 'Configure URL e token do banco em ⚙️.');
+    }
+    // Cache local recém-criado: espera a carga inicial. Consultar a replica
+    // vazia responderia "não encontrado" para qualquer código — erro
+    // silencioso, justamente o que não pode acontecer aqui.
+    if (!await turso.garantirDadosProntos()) {
+      throw ConsultaException(
+        'O cache local ainda está vazio e não deu para baixar os dados '
+        '(${turso.ultimoErroSync ?? 'sem conexão'}). '
+        'Conecte à internet e toque em Sincronizar em ⚙️.',
+      );
+    }
+    return turso.client!;
   }
 
   /// Acopla ao resultado os lotes do produto na lista de vencimentos.
@@ -281,19 +357,7 @@ class EstoqueService {
       'WHERE UPPER(TRIM(codigo)) IN ($placeholders)',
     );
     final rows = await stmt.query(positional: codigos);
-
-    final porCodigo = <String, CodigoSaldo>{};
-    for (final r in rows) {
-      final cod = normalizarCodigo(_texto(r['codigo']));
-      if (cod == null) continue;
-      porCodigo[cod] = CodigoSaldo(
-        codigo: cod,
-        produto: _texto(r['produto']),
-        categoria: _texto(r['categoria']).trim(),
-        qtdSistema: _numero(r['qtd_sistema']),
-        ultimaContagem: _texto(r['ultima_contagem']),
-      );
-    }
+    final porCodigo = {for (final l in _mapearLinhas(rows)) l.codigo: l};
 
     // Na ordem canônica dos códigos, para a exibição ser estável.
     return [
