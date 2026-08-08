@@ -4,6 +4,7 @@ import 'configuracao_page.dart';
 import 'consulta.dart';
 import 'estoque_service.dart';
 import 'produto_page.dart';
+import 'resultados_page.dart';
 import 'scanner_page.dart';
 import 'tema.dart';
 import 'turso_service.dart';
@@ -92,22 +93,53 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Consulta a leitura (digitada agora; da câmera na Etapa 3) e abre a
-  /// tela do produto.
+  /// Consulta o que foi digitado: código **ou nome do produto**.
+  ///
+  /// Parecendo código ('254185', 'US254185'), tenta primeiro a consulta por
+  /// código — é o caminho de sempre, o mesmo da câmera. Se o código não
+  /// existir, ou se o texto for um nome ('boral 20l'), cai na busca por
+  /// nome: um único resultado abre direto a tela do produto, vários abrem a
+  /// lista para escolher.
   Future<void> _consultar(String leitura) async {
     if (_consultando) return;
+    final termo = leitura.trim();
     setState(() {
       _consultando = true;
       _erro        = null;
     });
 
     ResultadoConsulta? resultado;
+    var achados = const <ProdutoEncontrado>[];
     String? erro;
     try {
-      resultado = await EstoqueService().consultarPorCodigo(leitura);
-      if (resultado == null) {
-        final codigo = extrairCodigo(leitura);
-        erro = 'Código $codigo não encontrado no estoque.';
+      if (termo.isEmpty) {
+        erro = 'Digite um código ou o nome do produto.';
+      } else {
+        final servico   = EstoqueService();
+        final ehCodigo  = pareceCodigo(termo);
+
+        if (ehCodigo) {
+          resultado = await servico.consultarPorCodigo(termo);
+        }
+
+        if (resultado == null) {
+          achados = await servico.buscarPorNome(termo);
+          if (achados.length == 1) {
+            resultado = await servico.consultarPorCodigo(achados.first.codigo);
+          }
+        }
+
+        if (resultado == null && achados.isEmpty) {
+          if (ehCodigo) {
+            erro = 'Código ${extrairCodigo(termo)} não encontrado no estoque.';
+          } else if (palavrasBusca(termo).join().length < minLetrasBusca) {
+            erro = 'Digite ao menos $minLetrasBusca letras do nome do produto.';
+          } else {
+            erro = 'Nenhum produto com "$termo" no estoque.';
+          }
+        } else if (resultado == null && achados.length == 1) {
+          erro = 'Produto ${achados.first.codigo} não encontrado no estoque.';
+        }
       }
     } on ConsultaException catch (e) {
       erro = e.mensagem;
@@ -123,6 +155,14 @@ class _HomePageState extends State<HomePage> {
     if (res != null) {
       await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => ProdutoPage(resultado: res)),
+      );
+      return;
+    }
+    if (achados.length > 1) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ResultadosPage(termo: termo, achados: achados),
+        ),
       );
     }
   }
@@ -233,7 +273,7 @@ class _Busca extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
-                      'ou digite o código',
+                      'ou digite o código ou o nome',
                       style: TemaCamda.textoStyle(
                         tamanho: 12,
                         cor: TemaCamda.textoFraco,
@@ -245,41 +285,55 @@ class _Busca extends StatelessWidget {
               ),
               const SizedBox(height: 22),
 
-              TextField(
-                controller: codigoCtrl,
-                enabled: !consultando,
-                textAlign: TextAlign.center,
-                textCapitalization: TextCapitalization.characters,
-                autocorrect: false,
-                enableSuggestions: false,
-                style: TemaCamda.numeroStyle(tamanho: 22, espacamento: 2),
-                onSubmitted: onConsultar,
-                decoration: InputDecoration(
-                  hintText: '254185 ou US254185',
-                  hintStyle: TemaCamda.numeroStyle(
-                    tamanho: 16,
-                    cor: const Color(0xFF3A4048),
-                  ),
-                  filled: true,
-                  fillColor: TemaCamda.card,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: TemaCamda.borda),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: TemaCamda.borda),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide:
-                        const BorderSide(color: TemaCamda.laranja, width: 1.5),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 18,
-                  ),
-                ),
+              // O estilo acompanha o que está sendo digitado: monoespaçado
+              // e espaçado para código (é o que a etiqueta mostra), texto
+              // normal e menor para nome, que é longo e não cabe em 22px.
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: codigoCtrl,
+                builder: (context, valor, _) {
+                  final texto   = valor.text.trim();
+                  final ehNome  = texto.isNotEmpty && !pareceCodigo(texto);
+                  return TextField(
+                    controller: codigoCtrl,
+                    enabled: !consultando,
+                    textAlign: TextAlign.center,
+                    textCapitalization: TextCapitalization.characters,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    style: ehNome
+                        ? TemaCamda.textoStyle(tamanho: 16, peso: 600)
+                        : TemaCamda.numeroStyle(tamanho: 22, espacamento: 2),
+                    onSubmitted: onConsultar,
+                    decoration: InputDecoration(
+                      hintText: '254185 ou BORAL 20L',
+                      hintStyle: TemaCamda.textoStyle(
+                        tamanho: 15,
+                        cor: const Color(0xFF3A4048),
+                      ),
+                      filled: true,
+                      fillColor: TemaCamda.card,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: TemaCamda.borda),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: TemaCamda.borda),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: TemaCamda.laranja,
+                          width: 1.5,
+                        ),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 18,
+                      ),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 14),
 
@@ -299,7 +353,7 @@ class _Busca extends StatelessWidget {
                       )
                     : const Icon(Icons.search, size: 20),
                 label: Text(
-                  consultando ? 'Consultando...' : 'Consultar estoque',
+                  consultando ? 'Consultando...' : 'Buscar no estoque',
                   style: TemaCamda.textoStyle(
                     tamanho: 15,
                     peso: 600,

@@ -59,22 +59,30 @@ const _semAcento = 'AAAAAEEEEIIIIOOOOOUUUUCNAAAAAEEEEIIIIOOOOOUUUUCN';
 /// "100235440 - FUNGICIDA FOX XPRO 20L" → "FUNGICIDA FOX XPRO 20L".
 final RegExp _prefixoBi = RegExp(r'^\s*[A-Z0-9\-]{3,20}\s*[-–]\s*(.+)$');
 
-/// Chave de comparação entre o nome de `estoque_mestre` e o de
-/// `validade_lotes`: sem prefixo do BI, sem acento, maiúsculo e com os
-/// espaços colapsados. Mesma regra do `_nome_validade_key` do dashboard.
-String chaveValidade(String nome) {
-  var s = nome.trim().toUpperCase();
+/// Texto em maiúsculo, sem acento e com os espaços colapsados — a forma em
+/// que nomes de produto são comparados (busca e lista de vencimentos).
+String chaveBusca(String texto) {
   final semAcentos = StringBuffer();
-  for (final c in s.split('')) {
+  for (final c in texto.trim().toUpperCase().split('')) {
     final i = _comAcento.indexOf(c);
     semAcentos.write(i >= 0 ? _semAcento[i] : c);
   }
   // Acento em forma decomposta (letra + marca combinante) não está na tabela
   // acima; a marca sai aqui.
-  s = semAcentos.toString().replaceAll(RegExp('[\\u0300-\\u036F]'), '');
+  return semAcentos
+      .toString()
+      .replaceAll(RegExp('[\\u0300-\\u036F]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+/// Chave de comparação entre o nome de `estoque_mestre` e o de
+/// `validade_lotes`: sem prefixo do BI, sem acento, maiúsculo e com os
+/// espaços colapsados. Mesma regra do `_nome_validade_key` do dashboard.
+String chaveValidade(String nome) {
+  final s = chaveBusca(nome);
   final m = _prefixoBi.firstMatch(s);
-  if (m != null) s = m.group(1)!;
-  return s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return m != null ? m.group(1)!.trim() : s;
 }
 
 /// True quando duas chaves de nome apontam para o mesmo produto.
@@ -138,6 +146,151 @@ String? extrairCodigo(String bruto) {
   }
 
   return normalizarCodigo(texto);
+}
+
+/// Mínimo de caracteres para uma busca por nome valer a pena: com menos de
+/// três letras o galpão inteiro casa e a lista não ajuda ninguém.
+const int minLetrasBusca = 3;
+
+/// Teto de itens da busca por nome. Passar disso é sinal de termo genérico
+/// ('herbicida'): a tela pede para refinar em vez de rolar o catálogo.
+const int limiteBusca = 60;
+
+/// Palavras de um termo de busca, normalizadas ([chaveBusca]) e sem os
+/// pedaços vazios: 'boral  20l' → ['BORAL', '20L'].
+List<String> palavrasBusca(String termo) {
+  final chave = chaveBusca(termo);
+  if (chave.isEmpty) return const [];
+  return chave.split(' ').where((p) => p.isNotEmpty).toList(growable: false);
+}
+
+/// True quando o texto digitado tem cara de código de produto — uma só
+/// palavra, com dígito e sem letra acentuada ('254185', 'US254185').
+///
+/// Serve para escolher o caminho da consulta: parecendo código, a busca vai
+/// primeiro em `estoque_mestre`/mapa por código; senão vai direto para a
+/// busca por nome. Um código que não existe ainda cai na busca por nome
+/// depois — a heurística nunca é a última palavra.
+bool pareceCodigo(String termo) {
+  final t = chaveBusca(termo);
+  if (t.isEmpty || t.contains(' ')) return false;
+  if (!RegExp(r'^[A-Z0-9\-./]+$').hasMatch(t)) return false;
+  return RegExp(r'[0-9]').hasMatch(t);
+}
+
+/// True quando TODAS as palavras do termo aparecem no nome do produto.
+///
+/// É um E entre as palavras, em qualquer ordem: 'boral 20' acha
+/// 'HERBICIDA BORAL 500 SC 20L', e 'fox xpro' não traz o resto dos
+/// fungicidas. Acento não atrapalha — os dois lados passam por
+/// [chaveBusca].
+bool nomeCasaBusca(String nome, List<String> palavras) {
+  if (palavras.isEmpty) return false;
+  final chave = chaveBusca(nome);
+  if (chave.isEmpty) return false;
+  return palavras.every(chave.contains);
+}
+
+/// Um produto achado pela busca por nome — já com os códigos do mesmo
+/// nome agrupados e o saldo somado.
+class ProdutoEncontrado {
+  /// Código usado para abrir a tela do produto (o menor do grupo, para a
+  /// escolha ser estável). A consulta completa é refeita por ele.
+  final String codigo;
+
+  /// Todos os códigos de `estoque_mestre` com este mesmo nome.
+  final List<String> codigos;
+
+  final String nome;
+  final String? categoria;
+
+  /// Soma de qtd_sistema dos códigos agrupados. É uma prévia da lista: o
+  /// número que vale é o da tela do produto, que resolve o mapa de códigos.
+  final double total;
+
+  const ProdutoEncontrado({
+    required this.codigo,
+    required this.nome,
+    this.codigos = const [],
+    this.categoria,
+    this.total = 0,
+  });
+}
+
+/// Agrupa linhas de `estoque_mestre` por nome de produto, somando o saldo.
+///
+/// Um produto com dois códigos ('254185' e 'US254185') aparece uma vez só na
+/// lista — repetir o mesmo nome duas vezes, cada um com metade do saldo,
+/// é exatamente o erro que a regra de multi-código existe para evitar.
+List<ProdutoEncontrado> agruparPorNome(List<CodigoSaldo> linhas) {
+  final grupos = <String, List<CodigoSaldo>>{};
+  for (final l in linhas) {
+    final chave = chaveBusca(l.produto);
+    if (chave.isEmpty) continue;
+    grupos.putIfAbsent(chave, () => []).add(l);
+  }
+
+  final achados = <ProdutoEncontrado>[];
+  for (final linhasDoGrupo in grupos.values) {
+    final codigos = linhasDoGrupo.map((l) => l.codigo).toSet().toList()..sort();
+    var total = 0.0;
+    for (final l in linhasDoGrupo) {
+      total += l.qtdSistema;
+    }
+    final categoria = linhasDoGrupo
+        .map((l) => l.categoria)
+        .firstWhere((c) => c != null && c.trim().isNotEmpty, orElse: () => null);
+    achados.add(ProdutoEncontrado(
+      codigo: codigos.first,
+      codigos: codigos,
+      nome: linhasDoGrupo.first.produto.trim(),
+      categoria: categoria,
+      total: total,
+    ));
+  }
+  return achados;
+}
+
+/// Ordem de exibição da busca: nome igual ao digitado primeiro, depois os
+/// que começam pelo termo, depois os que contêm o termo inteiro e por fim os
+/// que só têm as palavras espalhadas. Empate resolve em ordem alfabética.
+List<ProdutoEncontrado> ordenarPorRelevancia(
+  String termo,
+  List<ProdutoEncontrado> achados,
+) {
+  final chaveTermo = chaveBusca(termo);
+  int peso(ProdutoEncontrado p) {
+    final chave = chaveBusca(p.nome);
+    if (chave == chaveTermo) return 0;
+    if (chave.startsWith(chaveTermo)) return 1;
+    if (chave.contains(chaveTermo)) return 2;
+    return 3;
+  }
+
+  final lista = [...achados];
+  lista.sort((a, b) {
+    final c = peso(a).compareTo(peso(b));
+    return c != 0 ? c : chaveBusca(a.nome).compareTo(chaveBusca(b.nome));
+  });
+  return lista;
+}
+
+/// Filtra e ordena linhas de `estoque_mestre` pelo nome digitado.
+///
+/// Termo com menos de [minLetrasBusca] caracteres devolve lista vazia — a
+/// tela avisa em vez de despejar o catálogo inteiro.
+List<ProdutoEncontrado> buscarNasLinhas(
+  String termo,
+  List<CodigoSaldo> linhas, {
+  int limite = limiteBusca,
+}) {
+  final palavras = palavrasBusca(termo);
+  if (palavras.join().length < minLetrasBusca) return const [];
+  final casaram = linhas.where((l) => nomeCasaBusca(l.produto, palavras)).toList();
+  final ordenados = ordenarPorRelevancia(termo, agruparPorNome(casaram));
+  return ordenados.length > limite
+      ? ordenados.sublist(0, limite)
+      : ordenados;
 }
 
 /// Uma linha de estoque_mestre que entrou na soma.

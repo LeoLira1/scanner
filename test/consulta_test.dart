@@ -255,6 +255,98 @@ void main() {
     });
   });
 
+  group('busca por nome', () {
+    const linhas = [
+      CodigoSaldo(
+        codigo: '254185',
+        produto: 'HERBICIDA BORAL 500 SC 20L',
+        categoria: 'DEFENSIVOS',
+        qtdSistema: 201,
+      ),
+      CodigoSaldo(
+        codigo: 'US254185',
+        produto: 'HERBICIDA BORAL 500 SC 20L',
+        categoria: 'DEFENSIVOS',
+        qtdSistema: 403,
+      ),
+      CodigoSaldo(
+        codigo: '237191',
+        produto: 'HERBICIDA ULTIMATO SC 20L',
+        qtdSistema: 75,
+      ),
+      CodigoSaldo(
+        codigo: '900001',
+        produto: 'INSETICIDA ORQUÍDEA 5L',
+        qtdSistema: 4,
+      ),
+    ];
+
+    test('chaveBusca tira acento, caixa e espaço repetido', () {
+      expect(chaveBusca('  inseticida  orquídea 5l '), 'INSETICIDA ORQUIDEA 5L');
+      expect(chaveBusca(''), '');
+    });
+
+    test('pareceCodigo separa código de nome', () {
+      expect(pareceCodigo('US254185'), isTrue);
+      expect(pareceCodigo(' 254185 '), isTrue);
+      expect(pareceCodigo('BORAL'), isFalse, reason: 'sem dígito');
+      expect(pareceCodigo('fox xpro 20l'), isFalse, reason: 'tem espaço');
+      expect(pareceCodigo(''), isFalse);
+    });
+
+    test('nomeCasaBusca: E entre as palavras, em qualquer ordem', () {
+      expect(
+        nomeCasaBusca('HERBICIDA BORAL 500 SC 20L', palavrasBusca('boral 20')),
+        isTrue,
+      );
+      expect(
+        nomeCasaBusca('HERBICIDA BORAL 500 SC 20L', palavrasBusca('boral fox')),
+        isFalse,
+      );
+      expect(
+        nomeCasaBusca('INSETICIDA ORQUÍDEA 5L', palavrasBusca('orquidea')),
+        isTrue,
+        reason: 'acento não pode esconder o produto',
+      );
+      expect(nomeCasaBusca('QUALQUER COISA', const []), isFalse);
+    });
+
+    test('os dois códigos do mesmo produto viram um item, com saldo somado',
+        () {
+      final achados = buscarNasLinhas('boral', linhas);
+      expect(achados, hasLength(1));
+      expect(achados.first.nome, 'HERBICIDA BORAL 500 SC 20L');
+      expect(achados.first.total, 604);
+      expect(achados.first.codigos, ['254185', 'US254185']);
+      expect(achados.first.codigo, '254185', reason: 'o menor, para ser estável');
+      expect(achados.first.categoria, 'DEFENSIVOS');
+    });
+
+    test('termo genérico traz vários; termo curto não busca', () {
+      expect(buscarNasLinhas('herbicida', linhas), hasLength(2));
+      expect(buscarNasLinhas('or', linhas), isEmpty);
+      expect(buscarNasLinhas('xyz', linhas), isEmpty);
+    });
+
+    test('busca com acento acha o nome acentuado', () {
+      final achados = buscarNasLinhas('orquídea', linhas);
+      expect(achados, hasLength(1));
+      expect(achados.first.codigo, '900001');
+    });
+
+    test('limite corta a lista', () {
+      expect(buscarNasLinhas('herbicida', linhas, limite: 1), hasLength(1));
+    });
+
+    test('nome igual ao digitado vem antes do que só contém', () {
+      final ordenados = ordenarPorRelevancia('herbicida ultimato sc 20l', const [
+        ProdutoEncontrado(codigo: '1', nome: 'HERBICIDA ULTIMATO SC 20L BALDE'),
+        ProdutoEncontrado(codigo: '2', nome: 'HERBICIDA ULTIMATO SC 20L'),
+      ]);
+      expect(ordenados.map((p) => p.codigo).toList(), ['2', '1']);
+    });
+  });
+
   group('formatarQuantidade', () {
     test('inteiros sem casas, com milhar', () {
       expect(formatarQuantidade(604), '604');
