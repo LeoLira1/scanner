@@ -592,12 +592,14 @@ class _CodigosSomados extends StatelessWidget {
         ],
         // O banner laranja de "total incompleto" saiu do lugar de destaque
         // (agora ocupado pelo lote), mas a ressalva continua aqui embaixo,
-        // discreta: sem vínculo no mapa não há grupo de códigos para somar,
-        // e o número grande pode estar contando só uma parte.
-        if (r.avisoNaoVinculado) ...[
+        // discreta: sem vínculo no mapa o grupo de códigos foi montado pelo
+        // nome do produto — heurística, não cadastro —, e o número grande
+        // pode estar contando só uma parte. O texto diz qual dos dois casos
+        // é (ver textoAvisoNaoVinculado).
+        if (r.textoAvisoNaoVinculado != null) ...[
           const SizedBox(height: 6),
           Text(
-            'código não vinculado no mapa · o total pode estar incompleto',
+            r.textoAvisoNaoVinculado!,
             textAlign: TextAlign.center,
             style: TemaCamda.numeroStyle(
               tamanho: 11,

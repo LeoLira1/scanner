@@ -310,6 +310,60 @@ class CodigoSaldo {
   });
 }
 
+/// Linhas de `estoque_mestre` que são o MESMO produto que [codigoLido],
+/// agrupadas pelo NOME — o degrau de baixo da regra de múltiplos códigos.
+///
+/// Vale quando o código lido NÃO está em `mapa_produtos`: em vez de adivinhar
+/// o irmão por aritmética de string (a convenção `US`, que não cobre o
+/// `100237191` do Ultimato), junta as linhas cujo nome tem a mesma
+/// [chaveBusca] — a mesma regra que [agruparPorNome] já usa na busca por
+/// nome, e que cobre qualquer prefixo, presente ou futuro.
+///
+/// [linhas] são as candidatas lidas do banco, incluindo a do próprio código.
+/// [codigosNoMapa] são as candidatas que TÊM vínculo cadastrado no mapa:
+/// ficam de fora, porque o mapa manda mais que o nome — dois produtos
+/// diferentes com o mesmo texto em `produto`, separados no cadastro, não
+/// podem virar um só aqui.
+///
+/// Devolve lista vazia quando o código não tem linha em `estoque_mestre`
+/// (é o "não encontrado" da consulta) e a linha sozinha quando o nome do
+/// produto está em branco — nome vazio somaria produtos sem relação nenhuma.
+/// A ordem é a dos códigos, para a exibição ser estável.
+List<CodigoSaldo> irmaosPorNome(
+  String codigoLido,
+  Iterable<CodigoSaldo> linhas, {
+  Set<String> codigosNoMapa = const {},
+}) {
+  final alvo = normalizarCodigo(codigoLido);
+  if (alvo == null) return const [];
+
+  // Caixa e espaço no código não podem criar grupos separados: os dois lados
+  // da comparação passam por normalizarCodigo (UPPER(TRIM())).
+  CodigoSaldo? lida;
+  for (final l in linhas) {
+    if (normalizarCodigo(l.codigo) == alvo) {
+      lida = l;
+      break;
+    }
+  }
+  if (lida == null) return const [];
+
+  final chave = chaveBusca(lida.produto);
+  if (chave.isEmpty) return [lida];
+
+  final porCodigo = <String, CodigoSaldo>{alvo: lida};
+  for (final l in linhas) {
+    final cod = normalizarCodigo(l.codigo);
+    if (cod == null || cod == alvo) continue;
+    if (codigosNoMapa.contains(cod)) continue;
+    if (chaveBusca(l.produto) != chave) continue;
+    porCodigo.putIfAbsent(cod, () => l);
+  }
+
+  final codigos = porCodigo.keys.toList()..sort();
+  return [for (final c in codigos) porCodigo[c]!];
+}
+
 /// Resultado completo de uma consulta por código.
 class ResultadoConsulta {
   final String codigoLido;
@@ -371,6 +425,22 @@ class ResultadoConsulta {
 
   /// 'Total pode estar incompleto': código sem vínculo no mapa de produtos.
   bool get avisoNaoVinculado => !vinculado;
+
+  /// Texto da ressalva de total incompleto, ou null quando não há ressalva.
+  ///
+  /// Grupo montado pelo NOME do produto ([irmaosPorNome], o caminho de quem
+  /// não está no mapa) é heurística, não cadastro: a ressalva continua
+  /// ligada, mas diz o que de fato aconteceu — os códigos foram somados
+  /// porque o nome bateu, e não porque alguém os vinculou. Mais de uma linha
+  /// somada sem vínculo no mapa só acontece por esse caminho.
+  String? get textoAvisoNaoVinculado {
+    if (vinculado) return null;
+    if (saldos.length > 1) {
+      return 'códigos somados pelo nome · sem vínculo no mapa, '
+          'o total pode estar incompleto';
+    }
+    return 'código não vinculado no mapa · o total pode estar incompleto';
+  }
 
   /// Ex.: '254185 + US254185' — os códigos que entraram na soma.
   String get codigosSomados => saldos.map((s) => s.codigo).join(' + ');

@@ -72,14 +72,38 @@ catálogo inteiro.
 
 ## Regra crítica: múltiplos códigos
 
-Um produto da CAMDA pode ter mais de um código ativo — tipicamente um
-numérico e um alfanumérico (`254185` e `US254185`), cada um com saldo
-próprio em `estoque_mestre`. Ao ler qualquer código, o app resolve o
-produto em `mapa_produtos`/`mapa_produtos_codigos` e **soma o
-`qtd_sistema` de todos os códigos vinculados** — mesma lógica do
-`db_mapa.py` do camda-estoque. Se o código lido não estiver vinculado a
-nenhum produto do mapa, o app mostra o saldo da linha única com um aviso
-de que o total pode estar incompleto.
+Um produto da CAMDA pode ter mais de um código ativo — um numérico e outro
+com prefixo (`222534` e `US222534`, `237191` e `100237191`), cada um com
+saldo próprio em `estoque_mestre`. Na prateleira existe uma pilha só, e o
+saldo real é a soma:
+
+```
+ADJUVANTE PHOSFIX NORTOX 5L → 222534 (11) + US222534 (73) = 84
+HERBICIDA ULTIMATO SC 20L   → 237191 (40) + 100237191 (125) = 165
+```
+
+A resolução tem dois degraus, nesta ordem — a mesma regra do
+`agrupamento.dart` do app irmão `Contagemsimplificada`:
+
+1. **`mapa_produtos`/`mapa_produtos_codigos`** — o vínculo cadastrado no
+   dashboard. Autoritativo: o app soma o `qtd_sistema` de todos os códigos
+   do produto, mesma lógica do `db_mapa.py` do camda-estoque.
+2. **Nome do produto** — quando o código lido não está no mapa. Os irmãos
+   são as linhas de `estoque_mestre` com a mesma chave de nome (maiúscula,
+   sem acento, espaços colapsados), exatamente o que a busca por nome já
+   faz. Isso cobre qualquer prefixo, presente ou futuro, sem adivinhar
+   aritmética de string: a convenção `US` sozinha deixava o `100237191` do
+   Ultimato de fora e mostrava 40 no lugar de 165 — saldo errado é pior que
+   "não encontrado", porque quem está no galpão acredita no número.
+
+O mapa manda mais que o nome: um código já cadastrado em outro produto não
+entra num grupo montado por nome, e nome em branco não agrupa nada.
+
+Grupo montado por nome é heurística, não cadastro — então a ressalva de
+total incompleto continua na tela, dizendo o que de fato aconteceu:
+*"códigos somados pelo nome · sem vínculo no mapa, o total pode estar
+incompleto"*. Um código fora do mapa e sem irmão nenhum mantém a ressalva
+antiga, *"código não vinculado no mapa"*.
 
 ## Lote a carregar primeiro (FEFO)
 
