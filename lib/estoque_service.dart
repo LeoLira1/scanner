@@ -55,14 +55,12 @@ class EstoqueService {
       }
 
       if (produto == null) {
-        // Código não vinculado a nenhum mapa_produtos. Aplica a convenção
-        // US-prefix: todo produto com dois códigos tem um com 'US' na
-        // frente ('254185' ↔ 'US254185'). Busca o par no estoque_mestre
-        // para somar os dois saldos. Se o par não existir, _lerEstoque
-        // devolve só o código que existe — sem erro.
-        final par = _codigoPar(codigo);
-        final codigos = par != null ? [codigo, par] : [codigo];
-        final linhas = await _lerEstoque(client, codigos);
+        // Código não vinculado a nenhum mapa_produtos. O irmão é achado pelo
+        // NOME do produto, mesma regra da busca por nome: adivinhar o par por
+        // prefixo ('254185' ↔ 'US254185') deixava de fora o '100237191' do
+        // Ultimato e mostrava metade do saldo — erro pior que "não
+        // encontrado", porque quem está no galpão acredita no número.
+        final linhas = await _irmaosPorNome(client, codigo);
         if (linhas.isEmpty) return null;
         final base = montarResultado(
           codigoLido: codigo,
@@ -366,14 +364,102 @@ class EstoqueService {
     ];
   }
 
-  /// Par de código pela convenção US-prefix: 'US254185' → '254185',
-  /// '254185' → 'US254185'. Retorna null se remover 'US' deixaria vazio.
-  static String? _codigoPar(String codigo) {
-    if (codigo.startsWith('US')) {
-      final sem = codigo.substring(2);
-      return sem.isEmpty ? null : sem;
+  /// Linhas do produto quando o código lido está fora do mapa: a linha do
+  /// próprio código mais as demais linhas de `estoque_mestre` com o mesmo
+  /// nome de produto.
+  ///
+  /// Lista vazia = o código não tem linha nenhuma em `estoque_mestre`, o
+  /// "não encontrado" da consulta.
+  Future<List<CodigoSaldo>> _irmaosPorNome(
+    LibsqlClient client,
+    String codigo,
+  ) async {
+    final proprias = await _lerEstoque(client, [codigo]);
+    if (proprias.isEmpty) return const [];
+    final lida = proprias.first;
+
+    final candidatas = [lida, ...await _candidatasPorNome(client, lida)];
+    final grupo = irmaosPorNome(codigo, candidatas);
+    if (grupo.length <= 1) return grupo;
+
+    // O mapa manda mais que o nome: irmão já cadastrado em outro produto sai
+    // da soma. A pergunta só vale para quem entrou no grupo — perguntar pelo
+    // resultado inteiro do filtro seria um IN com a tabela toda dentro.
+    final noMapa = await _codigosComVinculo(client, [
+      for (final c in grupo)
+        if (c.codigo != lida.codigo) c.codigo,
+    ]);
+    if (noMapa.isEmpty) return grupo;
+    return irmaosPorNome(codigo, candidatas, codigosNoMapa: noMapa);
+  }
+
+  /// Linhas de `estoque_mestre` que podem ter o mesmo nome que [lida].
+  ///
+  /// O casamento final é em Dart ([irmaosPorNome]); aqui só se corta o
+  /// volume lido do banco.
+  Future<List<CodigoSaldo>> _candidatasPorNome(
+    LibsqlClient client,
+    CodigoSaldo lida,
+  ) async {
+    final filtro = _palavraFiltro(lida.produto);
+    if (filtro != null) {
+      final linhas = await _lerEstoqueComoLike(client, filtro);
+      // O filtro barato só vale se trouxer de volta a própria linha lida —
+      // quando nem ela aparece, ele é cego para os irmãos também (grafia
+      // fora do previsto, colação do banco) e não tem jeito senão varrer a
+      // tabela. Um irmão perdido aqui vira saldo pela metade na tela.
+      if (linhas.any((l) => l.codigo == lida.codigo)) return linhas;
     }
-    return 'US$codigo';
+    final stmt = await client.prepare(_colunasEstoque);
+    return _mapearLinhas(await stmt.query());
+  }
+
+  /// Palavra do nome do produto que serve de filtro barato no SQL: a mais
+  /// longa que é puro ASCII.
+  ///
+  /// O `LIKE` do SQLite não ignora acento e o `UPPER` dele só mexe em ASCII,
+  /// então uma palavra acentuada ('ORQUÍDEA') não pode ser usada aqui — não
+  /// casaria nem com a própria linha. Null quando não sobra palavra
+  /// utilizável: a consulta cai na varredura.
+  static String? _palavraFiltro(String nome) {
+    String? melhor;
+    for (final p in nome.trim().split(RegExp(r'\s+'))) {
+      if (p.length < minLetrasBusca) continue;
+      if (!RegExp(r'^[A-Za-z0-9]+$').hasMatch(p)) continue;
+      final up = p.toUpperCase();
+      if (melhor == null || up.length > melhor.length) melhor = up;
+    }
+    return melhor;
+  }
+
+  /// Dos códigos dados, os que têm vínculo em `mapa_produtos` — como código
+  /// principal ou como secundário em `mapa_produtos_codigos`.
+  ///
+  /// Banco sem as tabelas do mapa devolve conjunto vazio: aí só o nome
+  /// resta, que é justamente o caminho onde esta consulta é usada.
+  Future<Set<String>> _codigosComVinculo(
+    LibsqlClient client,
+    List<String> codigos,
+  ) async {
+    if (codigos.isEmpty) return const {};
+    final placeholders = List.filled(codigos.length, '?').join(', ');
+    final achados = <String>{};
+    for (final tabela in const ['mapa_produtos', 'mapa_produtos_codigos']) {
+      try {
+        final stmt = await client.prepare(
+          'SELECT codigo FROM $tabela '
+          'WHERE codigo IS NOT NULL AND UPPER(TRIM(codigo)) IN ($placeholders)',
+        );
+        for (final row in await stmt.query(positional: codigos)) {
+          final c = normalizarCodigo(_texto(row['codigo']));
+          if (c != null) achados.add(c);
+        }
+      } catch (e) {
+        // Uma tabela ausente não pode derrubar a leitura da outra.
+        if (!_tabelaAusente(e)) rethrow;
+      }
+    }
+    return achados;
   }
 
   /// Lê uma coluna como texto sem assumir o tipo devolvido pelo driver.

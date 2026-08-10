@@ -183,6 +183,42 @@ void main() {
     );
   });
 
+  testWidgets('grupo montado por nome diz que a soma veio do nome',
+      (tester) async {
+    // Ultimato lido fora do mapa: os dois códigos entram pelo nome do
+    // produto, e a ressalva não pode fingir que existe vínculo cadastrado.
+    final r = montarResultado(
+      codigoLido: '237191',
+      linhas: const [
+        CodigoSaldo(
+          codigo: '100237191',
+          produto: 'HERBICIDA ULTIMATO SC 20L',
+          qtdSistema: 125,
+        ),
+        CodigoSaldo(
+          codigo: '237191',
+          produto: 'HERBICIDA ULTIMATO SC 20L',
+          qtdSistema: 40,
+        ),
+      ],
+      codigosVinculados: const [],
+    );
+
+    await tester.pumpWidget(_envolver(r));
+    await tester.pumpAndSettle();
+
+    expect(find.text('165'), findsOneWidget);
+    expect(
+      find.text('códigos somados pelo nome · sem vínculo no mapa, '
+          'o total pode estar incompleto'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('código não vinculado no mapa'),
+      findsNothing,
+    );
+  });
+
   testWidgets('código vinculado não exibe a ressalva', (tester) async {
     final r = montarResultado(
       codigoLido: '254185',

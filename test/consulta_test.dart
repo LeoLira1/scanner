@@ -135,6 +135,185 @@ void main() {
     });
   });
 
+  group('irmãos por nome — código fora do mapa', () {
+    // Na prateleira existe uma pilha só: o produto tem dois códigos ativos,
+    // cada um com sua linha de saldo em estoque_mestre.
+    const phosfix = [
+      CodigoSaldo(
+        codigo: '222534',
+        produto: 'ADJUVANTE PHOSFIX NORTOX 5L',
+        categoria: 'ADJUVANTES',
+        qtdSistema: 11,
+      ),
+      CodigoSaldo(
+        codigo: 'US222534',
+        produto: 'ADJUVANTE PHOSFIX NORTOX 5L',
+        categoria: 'ADJUVANTES',
+        qtdSistema: 73,
+      ),
+    ];
+    const ultimato = [
+      CodigoSaldo(
+        codigo: '237191',
+        produto: 'HERBICIDA ULTIMATO SC 20L',
+        qtdSistema: 40,
+      ),
+      CodigoSaldo(
+        codigo: '100237191',
+        produto: 'HERBICIDA ULTIMATO SC 20L',
+        qtdSistema: 125,
+      ),
+    ];
+    const outro = CodigoSaldo(
+      codigo: '900001',
+      produto: 'INSETICIDA ORQUÍDEA 5L',
+      qtdSistema: 4,
+    );
+    const todas = [...phosfix, ...ultimato, outro];
+
+    double somar(List<CodigoSaldo> linhas) =>
+        linhas.fold(0.0, (s, l) => s + l.qtdSistema);
+
+    test('ULTIMATO: prefixo 100 é somado por qualquer um dos dois códigos',
+        () {
+      for (final lido in ['237191', '100237191']) {
+        final grupo = irmaosPorNome(lido, todas);
+        expect(
+          grupo.map((l) => l.codigo).toList(),
+          ['100237191', '237191'],
+          reason: 'lendo $lido',
+        );
+        expect(somar(grupo), 165, reason: 'lendo $lido');
+      }
+    });
+
+    test('PHOSFIX: o par US continua somando 11 + 73 = 84', () {
+      for (final lido in ['222534', 'US222534']) {
+        final grupo = irmaosPorNome(lido, todas);
+        expect(
+          grupo.map((l) => l.codigo).toList(),
+          ['222534', 'US222534'],
+          reason: 'lendo $lido',
+        );
+        expect(somar(grupo), 84, reason: 'lendo $lido');
+      }
+    });
+
+    test('nome vazio não agrupa', () {
+      const semNome = [
+        CodigoSaldo(codigo: '111111', produto: '', qtdSistema: 5),
+        CodigoSaldo(codigo: '222222', produto: '   ', qtdSistema: 7),
+      ];
+      final grupo = irmaosPorNome('111111', semNome);
+      expect(grupo.map((l) => l.codigo).toList(), ['111111']);
+      expect(somar(grupo), 5, reason: 'somaria produtos sem relação nenhuma');
+    });
+
+    test('caixa e espaço no código não criam grupos separados', () {
+      const cruas = [
+        CodigoSaldo(
+          codigo: ' us222534 ',
+          produto: 'Adjuvante  Phosfix Nortox 5L',
+          qtdSistema: 73,
+        ),
+        CodigoSaldo(
+          codigo: '222534',
+          produto: 'ADJUVANTE PHOSFIX NORTOX 5L',
+          qtdSistema: 11,
+        ),
+      ];
+      final grupo = irmaosPorNome(' us222534 ', cruas);
+      expect(grupo, hasLength(2));
+      expect(somar(grupo), 84);
+      // O mesmo grupo sai lendo o código já normalizado.
+      expect(somar(irmaosPorNome('US222534', cruas)), 84);
+    });
+
+    test('acento e espaço repetido no nome não separam o irmão', () {
+      const grafias = [
+        CodigoSaldo(
+          codigo: '900001',
+          produto: 'INSETICIDA ORQUÍDEA 5L',
+          qtdSistema: 4,
+        ),
+        CodigoSaldo(
+          codigo: 'US900001',
+          produto: '  inseticida  orquidea 5l ',
+          qtdSistema: 6,
+        ),
+      ];
+      expect(somar(irmaosPorNome('900001', grafias)), 10);
+    });
+
+    test('o mapa manda mais que o nome: irmão cadastrado em outro produto '
+        'fica de fora', () {
+      const homonimo = CodigoSaldo(
+        codigo: '999999',
+        produto: 'ADJUVANTE PHOSFIX NORTOX 5L',
+        qtdSistema: 500,
+      );
+      final grupo = irmaosPorNome(
+        '222534',
+        const [...phosfix, homonimo],
+        codigosNoMapa: const {'999999'},
+      );
+      expect(grupo.map((l) => l.codigo).toList(), ['222534', 'US222534']);
+      expect(somar(grupo), 84, reason: 'o homônimo do mapa não entra na soma');
+    });
+
+    test('código sem linha em estoque_mestre: não encontrado', () {
+      expect(irmaosPorNome('404404', todas), isEmpty);
+      expect(irmaosPorNome('   ', todas), isEmpty);
+    });
+
+    test('produto de nome único fica sozinho', () {
+      final grupo = irmaosPorNome('900001', todas);
+      expect(grupo.map((l) => l.codigo).toList(), ['900001']);
+    });
+
+    test('o total do grupo por nome vira o saldo da tela, com a ressalva '
+        'reescrita', () {
+      final grupo = irmaosPorNome('237191', todas);
+      final r = montarResultado(
+        codigoLido: '237191',
+        linhas: grupo,
+        codigosVinculados: const [],
+      );
+      expect(r.total, 165);
+      expect(r.nomeProduto, 'HERBICIDA ULTIMATO SC 20L');
+      expect(r.codigosSomados, '100237191 + 237191');
+      expect(r.vinculado, isFalse, reason: 'nome não é cadastro');
+      expect(r.avisoNaoVinculado, isTrue);
+      expect(
+        r.textoAvisoNaoVinculado,
+        'códigos somados pelo nome · sem vínculo no mapa, '
+        'o total pode estar incompleto',
+      );
+    });
+
+    test('linha única fora do mapa mantém a ressalva antiga', () {
+      final r = montarResultado(
+        codigoLido: '900001',
+        linhas: irmaosPorNome('900001', todas),
+        codigosVinculados: const [],
+      );
+      expect(
+        r.textoAvisoNaoVinculado,
+        'código não vinculado no mapa · o total pode estar incompleto',
+      );
+    });
+
+    test('código vinculado no mapa não tem ressalva', () {
+      final r = montarResultado(
+        codigoLido: '222534',
+        linhas: phosfix,
+        codigosVinculados: const ['222534', 'US222534'],
+      );
+      expect(r.total, 84);
+      expect(r.textoAvisoNaoVinculado, isNull);
+    });
+  });
+
   group('lista de vencimentos — lote a carregar primeiro', () {
     test('chaveValidade tira prefixo do BI, acento e espaço extra', () {
       expect(
