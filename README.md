@@ -212,26 +212,93 @@ Quando a confirmação vier, a conversão entra no próprio número grande:
 valor convertido em destaque e valor cru pequeno embaixo (como na maquete
 `tag-estoque.html`), sem tomar o espaço do lote.
 
-## Cache local
+## Cache local: o espelho seletivo
 
-Em ⚙️, a chave **Cache local** (ligada por padrão) mantém uma cópia do
-banco num arquivo do aparelho — o app abre e responde na hora, mesmo com
-a internet ruim do galpão. Ali também ficam:
+Em ⚙️, a chave **Cache local** (ligada por padrão) mantém no aparelho uma
+cópia **só do que o app consulta** — o app abre e responde na hora, mesmo com
+a internet ruim do galpão. Quando a resposta vem do arquivo local, a tela do
+produto avisa com `CACHE LOCAL · sincronizado há N min`; quando vem direto do
+banco, mostra `consultado agora do banco`.
 
-- **Sincronizar** — puxa as novidades do banco online;
-- **Limpar cache local** — apaga o arquivo e baixa tudo de novo;
-- a data e hora da **última sincronização**.
+Até a versão anterior o cache era uma **réplica embutida** do libSQL, e o
+`sync()` dela copia o banco *inteiro* do camda-estoque. Só que o scanner lê 5
+colunas de `estoque_mestre`, 4 de `validade_lotes` e as duas tabelas do mapa —
+e o banco carrega junto o que ele nunca abre:
 
-Quando a resposta vem do arquivo local, a tela do produto avisa com
-`CACHE LOCAL · sincronizado há N min`; quando vem direto do banco, mostra
-`consultado agora do banco`.
+- `pendencias_entrega.foto_base64` e `avaria_fotos.foto_base64` — fotos de
+  celular guardadas em base64 na mesma base, sem retenção nenhuma;
+- `vendas_historico`, `contagem_itens`, `historico_divergencias`,
+  `mapa_posicoes`, `faturamento_gv`…
 
-Como o app só lê, a réplica local é aberta em modo `replica` (nunca
-`offline`): não existe gravação para empurrar de volta, então um token
-read-only basta e não há risco de conflito de frames. Na primeira consulta
-com o cache ainda vazio o app espera a carga inicial em vez de responder
-"código não encontrado" — um cache vazio nunca é confundido com estoque
-inexistente.
+Eram dezenas de MB baixados para usar menos de 1 MB. Pior: todo upload de
+planilha faz `DELETE` + re-INSERT em `estoque_mestre` e `validade_lotes`, então
+o delta era sempre a tabela inteira — o protocolo incremental não tinha o que
+economizar.
+
+Hoje o app monta o próprio espelho (`lib/espelho.dart`), com as quatro tabelas
+e só as colunas consultadas:
+
+| tabela | colunas espelhadas |
+|---|---|
+| `estoque_mestre` | `codigo, produto, categoria, qtd_sistema, ultima_contagem` |
+| `validade_lotes` | `produto, lote, vencimento, quantidade` |
+| `mapa_produtos` | `produto_id, nome, unidade_pad, codigo` |
+| `mapa_produtos_codigos` | `produto_id, codigo` |
+
+O banco online continua **intocado**: as escritas são todas no arquivo do
+aparelho, e um token read-only continua bastando.
+
+Como cada tabela é atualizada:
+
+1. **Um agregado decide se vale baixar.** Antes de puxar `estoque_mestre` e
+   `validade_lotes`, o app lê uma *impressão digital* delas no banco (contagem,
+   soma de `qtd_sistema`, soma ponderada pelo `rowid`, `MAX(criado_em)`…). Igual
+   à da última vez, a tabela é pulada e a atualização termina em ~1 s dizendo
+   *"Já estava atualizado ✓"*. As duas tabelas do mapa são pequenas e não têm
+   coluna de data que marque alteração: são sempre rebaixadas inteiras — sai mais
+   barato que arriscar somar saldo com vínculo velho.
+2. **Paginação por keyset**, não por `OFFSET`: `WHERE rowid > ? ORDER BY rowid`.
+   Com `OFFSET` o servidor relê as linhas anteriores a cada página, o que
+   multiplica o *rows read* cobrado pelo Turso.
+3. **Troca atômica.** As páginas caem numa tabela de encenação (`..__novo`) e só
+   no fim ela substitui a viva, numa transação só. Falha no meio do caminho
+   deixa o espelho anterior inteiro — saldo pela metade na tela é pior que saldo
+   velho, porque quem está no galpão acredita no número.
+4. **Índices sobre a expressão consultada.** As consultas comparam por
+   `UPPER(TRIM(codigo))`, e um índice comum sobre `codigo` não seria usado — o
+   espelho cria o índice sobre a mesma expressão.
+
+> **Até onde a impressão digital vale.** Ela é um punhado de agregados, não um
+> hash: pega toda alteração de quantidade, toda exclusão e toda reescrita de
+> planilha — tudo que muda o número na tela. O que ela não pega é uma edição só
+> de texto que preserve os agregados (o upload incremental do dashboard troca
+> `produto` sem tocar em `criado_em`, então um renome de mesmo comprimento não a
+> move). Por isso a impressão só é aceita como prova por **6 horas**: passado
+> isso a tabela é rebaixada de qualquer jeito, e o ponto cego se fecha sozinho.
+> **Atualização completa**, em ⚙️, ignora a impressão e rebaixa tudo na hora.
+
+Na primeira consulta com o espelho ainda vazio o app espera a carga inicial em
+vez de responder "código não encontrado" — espelho vazio nunca é confundido com
+estoque inexistente.
+
+## Quando o app se atualiza
+
+- **Sozinho**, em segundo plano: ao abrir o app e a cada N minutos com ele na
+  tela (15 por padrão; 5, 15, 30 ou desligado em ⚙️). O relógio para quando o
+  app vai para segundo plano e dispara uma atualização na volta. Sem novidade no
+  banco, o ciclo custa dois agregados — alguns bytes.
+- **No botão ↻** da tela inicial, a qualquer momento.
+- **Atualização completa**, em ⚙️, quando houver dúvida se o número está velho.
+
+A atualização **não trava a tela**: enquanto o espelho novo é montado na tabela
+de encenação, escanear e consultar continuam respondendo na hora com os dados
+anteriores. Sair da tela no meio não cancela nada — o estado mora no serviço, e
+o ícone continua girando quando se volta.
+
+Ainda em ⚙️: **Limpar cache local** (apaga o arquivo e baixa tudo de novo), a
+data da **última atualização** e um **diagnóstico** com quanto a última demorou,
+quanto o espelho ocupa no aparelho e quantas linhas há em cada tabela — é com
+ele que dá para comparar o antes e o depois sem PC.
 
 ## Como gerar o APK (sem PC)
 

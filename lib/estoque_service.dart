@@ -69,7 +69,7 @@ class EstoqueService {
           doCacheLocal: doCache,
           sincronizadoEm: sincronizadoEm,
         );
-        return _comLotes(client, base);
+        return await _comLotes(client, base);
       }
 
       // 2. Todos os códigos do produto (principal + secundários), na forma
@@ -93,7 +93,7 @@ class EstoqueService {
         doCacheLocal: doCache,
         sincronizadoEm: sincronizadoEm,
       );
-      return _comLotes(client, base, nomeMapa: produto.nome);
+      return await _comLotes(client, base, nomeMapa: produto.nome);
     } on ConsultaException {
       rethrow;
     } catch (e) {
