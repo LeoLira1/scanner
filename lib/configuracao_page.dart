@@ -23,13 +23,16 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
   String? _statusTeste;
   bool    _testeOk       = false;
   bool    _cacheLocal    = true;
-  bool    _sincronizando = false;
   bool    _limpandoCache = false;
+  int     _intervaloMin  = TursoService.intervaloPadraoMin;
+
+  DiagnosticoEspelho? _diagnostico;
 
   @override
   void initState() {
     super.initState();
     _carregarCredenciais();
+    _carregarDiagnostico();
   }
 
   @override
@@ -46,7 +49,15 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
       _urlCtrl.text   = prefs.getString(TursoService.keyDbUrl)   ?? '';
       _tokenCtrl.text = prefs.getString(TursoService.keyDbToken) ?? '';
       _cacheLocal     = prefs.getBool(TursoService.keyCacheLocal) ?? true;
+      _intervaloMin   = prefs.getInt(TursoService.keyIntervaloMin) ??
+          TursoService.intervaloPadraoMin;
     });
+  }
+
+  Future<void> _carregarDiagnostico() async {
+    final diag = await TursoService().diagnostico();
+    if (!mounted) return;
+    setState(() => _diagnostico = diag);
   }
 
   Future<void> _alterarCacheLocal(bool valor) async {
@@ -55,20 +66,27 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _sincronizarAgora() async {
-    setState(() => _sincronizando = true);
-    final ok = await TursoService().sincronizar();
+  /// [completa] ignora as impressões digitais e rebaixa todas as tabelas —
+  /// o caminho de quem desconfia que o número na tela está velho.
+  Future<void> _sincronizarAgora({bool completa = false}) async {
+    final servico = TursoService();
+    if (servico.sincronizando.value) return;
+
+    final resumo = await servico.sincronizar(completa: completa);
+    await _carregarDiagnostico();
     if (!mounted) return;
-    setState(() => _sincronizando = false);
+
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok
-          ? 'Sincronizado com o banco online ✓'
-          : 'Não foi possível sincronizar — '
-              '${TursoService().ultimoErroSync ?? 'verifique a conexão'}'),
+      content: Text(resumo.mensagem),
       backgroundColor:
-          ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
-      duration: Duration(seconds: ok ? 2 : 6),
+          resumo.ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
+      duration: Duration(seconds: resumo.ok ? 2 : 6),
     ));
+  }
+
+  Future<void> _alterarIntervalo(int minutos) async {
+    setState(() => _intervaloMin = minutos);
+    await TursoService().definirIntervaloSync(minutos);
   }
 
   Future<void> _confirmarLimparCache() async {
@@ -85,8 +103,8 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
           style: TemaCamda.textoStyle(tamanho: 15, peso: 600),
         ),
         content: Text(
-          'Apaga o arquivo de dados salvo neste dispositivo e baixa tudo '
-          'de novo do banco online.\n\n'
+          'Apaga o arquivo salvo neste dispositivo e baixa tudo de novo do '
+          'banco online.\n\n'
           'Nada é perdido: o app só lê o estoque, então o arquivo local é '
           'sempre uma cópia do banco.',
           style: TemaCamda.textoStyle(
@@ -127,6 +145,7 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
     final servico = TursoService();
     final ok = await servico.limparCacheLocal();
     if (ok) await servico.init();
+    await _carregarDiagnostico();
     if (!mounted) return;
     setState(() => _limpandoCache = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -143,11 +162,26 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
 
   String _textoUltimaSync() {
     final quando = TursoService().ultimaSincronizacao;
-    if (quando == null) return 'Nunca sincronizado';
+    if (quando == null) return 'Nunca atualizado';
     String dois(int n) => n.toString().padLeft(2, '0');
-    return 'Última sincronização: ${dois(quando.day)}/${dois(quando.month)}/'
+    return 'Última atualização: ${dois(quando.day)}/${dois(quando.month)}/'
         '${quando.year} ${dois(quando.hour)}:${dois(quando.minute)}';
   }
+
+  static String _tempo(Duration d) {
+    final s = d.inMilliseconds / 1000;
+    return s < 10 ? '${s.toStringAsFixed(1)} s' : '${s.round()} s';
+  }
+
+  static String _tamanho(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.round()} KB';
+    return '${(kb / 1024).toStringAsFixed(1)} MB';
+  }
+
+  static String _rotuloIntervalo(int minutos) =>
+      minutos <= 0 ? 'Desligado' : '$minutos min';
 
   Future<void> _salvarConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -199,6 +233,186 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
         _testeOk     = false;
       });
     }
+  }
+
+  /// Bloco de atualização do espelho: quando foi a última, quanto ela custou,
+  /// os dois botões e de quanto em quanto tempo o app se atualiza sozinho.
+  ///
+  /// O estado de "atualizando" vem do serviço, não desta tela: a atualização
+  /// roda em segundo plano e pode já estar no ar quando se entra aqui.
+  Widget _blocoAtualizacao() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: TursoService().sincronizando,
+      builder: (context, sincronizando, _) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _textoUltimaSync(),
+              style: TemaCamda.numeroStyle(
+                tamanho: 11,
+                cor: TemaCamda.textoFraco,
+              ),
+            ),
+            if (TursoService().ultimoErroSync != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Última falha: ${TursoService().ultimoErroSync}',
+                style: TemaCamda.textoStyle(
+                  tamanho: 11,
+                  cor: TemaCamda.vermelho,
+                  altura: 1.3,
+                ),
+              ),
+            ],
+            _linhaDiagnostico(),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: sincronizando ? null : () => _sincronizarAgora(),
+                  icon: sincronizando
+                      ? const SizedBox(
+                          width: 13,
+                          height: 13,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF4A9D6A),
+                          ),
+                        )
+                      : const Icon(Icons.sync, size: 15),
+                  label: Text(sincronizando ? 'Atualizando...' : 'Atualizar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF4A9D6A),
+                    side: const BorderSide(color: Color(0xFF2E4A38)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: sincronizando
+                      ? null
+                      : () => _sincronizarAgora(completa: true),
+                  icon: const Icon(Icons.cloud_download_outlined, size: 15),
+                  label: const Text('Atualização completa'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: TemaCamda.textoFraco,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Atualizar traz só o que mudou no banco. A completa rebaixa '
+              'tudo — use quando desconfiar que o número na tela está velho.',
+              style: TemaCamda.textoStyle(
+                tamanho: 11,
+                cor: TemaCamda.textoFraco,
+                altura: 1.4,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Atualizar sozinho',
+              style: TemaCamda.textoStyle(tamanho: 12, peso: 600),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Ao abrir o app e de tempos em tempos, em segundo plano. Sem '
+              'novidade no banco, o app só confere e não baixa nada.',
+              style: TemaCamda.textoStyle(
+                tamanho: 11,
+                cor: TemaCamda.textoFraco,
+                altura: 1.4,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final minutos in TursoService.intervalosDisponiveis)
+                  ChoiceChip(
+                    label: Text(_rotuloIntervalo(minutos)),
+                    selected: _intervaloMin == minutos,
+                    onSelected: (_) => _alterarIntervalo(minutos),
+                    labelStyle: TemaCamda.textoStyle(
+                      tamanho: 12,
+                      cor: _intervaloMin == minutos
+                          ? TemaCamda.texto
+                          : TemaCamda.textoFraco,
+                    ),
+                    backgroundColor: TemaCamda.fundo,
+                    selectedColor: const Color(0xFF1B3A2A),
+                    side: BorderSide(
+                      color: _intervaloMin == minutos
+                          ? const Color(0xFF2E6B46)
+                          : TemaCamda.borda,
+                    ),
+                    showCheckmark: false,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// O custo real da última atualização e o que o espelho guarda hoje. É com
+  /// isto que dá para comparar o antes e o depois no próprio aparelho, sem PC
+  /// nem ferramenta externa.
+  Widget _linhaDiagnostico() {
+    final diag = _diagnostico;
+    if (diag == null) return const SizedBox.shrink();
+
+    final custo = <String>[
+      if (diag.ultimaDuracao != null) 'levou ${_tempo(diag.ultimaDuracao!)}',
+      if (diag.bytes > 0) '${_tamanho(diag.bytes)} no aparelho',
+    ];
+    final porTabela = [
+      for (final e in diag.linhas.entries) '${e.key} ${e.value}',
+    ];
+    if (custo.isEmpty && porTabela.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (custo.isNotEmpty)
+            Text(
+              custo.join(' · '),
+              style: TemaCamda.numeroStyle(
+                tamanho: 11,
+                cor: TemaCamda.textoFraco,
+              ),
+            ),
+          if (porTabela.isNotEmpty)
+            Text(
+              porTabela.join(' · '),
+              style: TemaCamda.numeroStyle(
+                tamanho: 10,
+                cor: TemaCamda.textoFraco,
+                altura: 1.6,
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -288,6 +502,9 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
             ),
 
             // ── Cache local ─────────────────────────────────────────────
+            // O arquivo guarda só as tabelas que o app consulta (ver
+            // espelho.dart) — não a cópia do banco inteiro, que trazia junto
+            // as fotos em base64 do camda-estoque a cada atualização.
             const SizedBox(height: 28),
             Container(
               decoration: BoxDecoration(
@@ -305,10 +522,10 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
                     style: TemaCamda.textoStyle(tamanho: 13),
                   ),
                   subtitle: Text(
-                    'Guarda uma cópia dos dados num arquivo do dispositivo: '
-                    'o app abre e responde na hora, mesmo com internet '
-                    'ruim. Use Sincronizar para trazer as novidades do '
-                    'banco online.',
+                    'Guarda no aparelho uma cópia só do que o app consulta: '
+                    'ele abre e responde na hora, mesmo com a internet ruim '
+                    'do galpão. As novidades do banco entram sozinhas em '
+                    'segundo plano, ou no botão Atualizar.',
                     style: TemaCamda.textoStyle(
                       tamanho: 11,
                       cor: TemaCamda.textoFraco,
@@ -316,65 +533,7 @@ class _ConfiguracaoPageState extends State<ConfiguracaoPage> {
                     ),
                   ),
                 ),
-                if (_cacheLocal)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-                    child: Row(children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _textoUltimaSync(),
-                              style: TemaCamda.numeroStyle(
-                                tamanho: 11,
-                                cor: TemaCamda.textoFraco,
-                              ),
-                            ),
-                            if (TursoService().ultimoErroSync != null) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                'Última falha: '
-                                '${TursoService().ultimoErroSync}',
-                                style: TemaCamda.textoStyle(
-                                  tamanho: 11,
-                                  cor: TemaCamda.vermelho,
-                                  altura: 1.3,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _sincronizando ? null : _sincronizarAgora,
-                        icon: _sincronizando
-                            ? const SizedBox(
-                                width: 13,
-                                height: 13,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF4A9D6A),
-                                ),
-                              )
-                            : const Icon(Icons.sync, size: 15),
-                        label: Text(
-                          _sincronizando ? 'Sincronizando...' : 'Sincronizar',
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF4A9D6A),
-                          side: const BorderSide(color: Color(0xFF2E4A38)),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ]),
-                  ),
+                if (_cacheLocal) _blocoAtualizacao(),
                 if (_cacheLocal)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),

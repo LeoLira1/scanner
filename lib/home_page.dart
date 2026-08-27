@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'configuracao_page.dart';
@@ -16,25 +18,43 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _codigoCtrl = TextEditingController();
 
-  bool    _configurado   = false;
-  bool    _carregando    = true;
-  bool    _consultando   = false;
-  bool    _sincronizando = false;
+  bool    _configurado = false;
+  bool    _carregando  = true;
+  bool    _consultando = false;
   String? _erro;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _verificarConfiguracao();
+    unawaited(TursoService().iniciarAutomatico());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    TursoService().pararAutomatico();
     _codigoCtrl.dispose();
     super.dispose();
+  }
+
+  /// O relógio da atualização automática só corre com o app na tela: em
+  /// segundo plano ele gastaria bateria e dados do celular do galpão sem
+  /// ninguém para ver o resultado. Na volta ao primeiro plano, uma atualização
+  /// na hora — é quando o estoque tem mais chance de ter mudado desde a última.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState estado) {
+    final servico = TursoService();
+    if (estado == AppLifecycleState.resumed) {
+      unawaited(servico.iniciarAutomatico());
+      unawaited(servico.sincronizarSeVelho());
+    } else if (estado == AppLifecycleState.paused) {
+      servico.pararAutomatico();
+    }
   }
 
   Future<void> _verificarConfiguracao() async {
@@ -53,37 +73,36 @@ class _HomePageState extends State<HomePage> {
     _verificarConfiguracao();
   }
 
-  /// Sincronizar direto da tela principal: atualizar o cache é a operação
-  /// do dia a dia (o estoque muda o tempo todo), não uma configuração —
-  /// não faz sentido obrigar a entrar em ⚙️ para isso.
+  /// Atualizar direto da tela principal: trazer o estoque do dia é a operação
+  /// do dia a dia (o estoque muda o tempo todo), não uma configuração — não
+  /// faz sentido obrigar a entrar em ⚙️ para isso.
+  ///
+  /// A atualização roda em segundo plano: enquanto o espelho novo é montado
+  /// numa tabela à parte, escanear e consultar continuam respondendo na hora,
+  /// com os dados anteriores.
   Future<void> _sincronizar() async {
-    if (_sincronizando) return;
-    setState(() => _sincronizando = true);
-
     final servico = TursoService();
-    final ok = await servico.sincronizar();
+    if (servico.sincronizando.value) return;
 
+    final resumo = await servico.sincronizar();
     if (!mounted) return;
-    setState(() => _sincronizando = false);
+
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok
-          ? 'Sincronizado com o banco online ✓'
-          : 'Não foi possível sincronizar — '
-              '${servico.ultimoErroSync ?? 'verifique a conexão'}'),
+      content: Text(resumo.mensagem),
       backgroundColor:
-          ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
-      duration: Duration(seconds: ok ? 2 : 6),
+          resumo.ok ? const Color(0xFF2E6B46) : const Color(0xFF8B1A1A),
+      duration: Duration(seconds: resumo.ok ? 2 : 6),
     ));
   }
 
   /// O toque abre o menu de acessibilidade/tooltip com a data da última
-  /// sincronização — a informação que decide se vale sincronizar de novo.
-  String _tooltipSync() {
-    if (_sincronizando) return 'Sincronizando...';
+  /// atualização — a informação que decide se vale atualizar de novo.
+  String _tooltipSync(bool sincronizando) {
+    if (sincronizando) return 'Atualizando...';
     final quando = TursoService().ultimaSincronizacao;
-    if (quando == null) return 'Sincronizar (nunca sincronizado)';
+    if (quando == null) return 'Atualizar (nunca atualizado)';
     String dois(int n) => n.toString().padLeft(2, '0');
-    return 'Sincronizar — última: ${dois(quando.day)}/${dois(quando.month)} '
+    return 'Atualizar — última: ${dois(quando.day)}/${dois(quando.month)} '
         '${dois(quando.hour)}:${dois(quando.minute)}';
   }
 
@@ -174,20 +193,26 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Scanner CAMDA'),
         actions: [
+          // O estado de "atualizando" mora no serviço, não nesta tela: a
+          // atualização segue em segundo plano quando se entra na tela do
+          // produto, e o ícone continua certo ao voltar.
           if (_configurado)
-            IconButton(
-              icon: _sincronizando
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: TemaCamda.verde,
-                      ),
-                    )
-                  : const Icon(Icons.sync, size: 20),
-              tooltip: _tooltipSync(),
-              onPressed: _sincronizando ? null : _sincronizar,
+            ValueListenableBuilder<bool>(
+              valueListenable: TursoService().sincronizando,
+              builder: (context, sincronizando, _) => IconButton(
+                icon: sincronizando
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: TemaCamda.verde,
+                        ),
+                      )
+                    : const Icon(Icons.sync, size: 20),
+                tooltip: _tooltipSync(sincronizando),
+                onPressed: sincronizando ? null : _sincronizar,
+              ),
             ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
