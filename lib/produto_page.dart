@@ -92,13 +92,17 @@ class ProdutoPage extends StatelessWidget {
   }
 }
 
-const _verdeFotoIcone = Color(0xFF6FCF97);
-const _verdeFotoBorda = Color(0xFF4F9B72);
 const _raioCartao = 32.0;
 
 /// Card com foto do produto no verso — "carta que vira". Frente = [_Cartao];
 /// verso = foto (ou convite para adicionar). Fotos só locais (ver
 /// [FotosProduto]); nada disso toca o banco.
+///
+/// Sem botões de canto: tocar na frente vira, tocar no verso desvira, e
+/// trocar/remover a foto é com toque longo no verso — assim não dá para
+/// abrir a câmera sem querer. O botão "próximo lote" fica dentro da frente e
+/// ganha a disputa do toque (o botão mais interno vence), então abrir os
+/// lotes não vira a carta.
 class _CartaVira extends StatefulWidget {
   const _CartaVira({required this.resultado});
 
@@ -253,22 +257,11 @@ class _CartaViraState extends State<_CartaVira>
                 opacity: mostraVerso ? 0 : 1,
                 child: IgnorePointer(
                   ignoring: mostraVerso,
-                  child: Stack(
-                    children: [
-                      _Cartao(resultado: widget.resultado),
-                      Positioned(
-                        top: 14,
-                        right: 14,
-                        child: _BotaoCanto(
-                          icone: Icons.photo_outlined,
-                          corIcone:
-                              temFoto ? _verdeFotoIcone : TemaCamda.textoFraco,
-                          corBorda:
-                              temFoto ? _verdeFotoBorda : TemaCamda.borda,
-                          onTap: _virar,
-                        ),
-                      ),
-                    ],
+                  child: GestureDetector(
+                    key: const ValueKey('frente-carta'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _virar,
+                    child: _Cartao(resultado: widget.resultado),
                   ),
                 ),
               ),
@@ -290,43 +283,6 @@ class _CartaViraState extends State<_CartaVira>
           ),
         );
       },
-    );
-  }
-}
-
-/// Botão quadrado pequeno (36x36, raio 10) usado nos cantos da carta.
-class _BotaoCanto extends StatelessWidget {
-  const _BotaoCanto({
-    required this.icone,
-    required this.corIcone,
-    required this.corBorda,
-    required this.onTap,
-    this.fundo = Colors.transparent,
-  });
-
-  final IconData icone;
-  final Color corIcone;
-  final Color corBorda;
-  final Color fundo;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: fundo,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: corBorda),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: SizedBox(
-          width: 36,
-          height: 36,
-          child: Icon(icone, size: 20, color: corIcone),
-        ),
-      ),
     );
   }
 }
@@ -362,8 +318,12 @@ class _Verso extends StatelessWidget {
         border: Border.all(color: TemaCamda.borda),
       ),
       child: GestureDetector(
+        key: const ValueKey('verso-carta'),
         behavior: HitTestBehavior.opaque,
         onTap: onDesvirar,
+        // Toque longo: trocar/remover. Só com foto — sem foto o convite do
+        // meio já abre as opções.
+        onLongPress: comFoto ? onAbrirSheet : null,
         child: comFoto
             ? Stack(
                 fit: StackFit.expand,
@@ -385,36 +345,46 @@ class _Verso extends StatelessWidget {
                         color: TemaCamda.card,
                         border: Border(top: BorderSide(color: TemaCamda.borda)),
                       ),
-                      child: Text(
-                        nome,
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TemaCamda.textoStyle(
-                          tamanho: 15,
-                          peso: 600,
-                          altura: 1.3,
-                        ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            nome,
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TemaCamda.textoStyle(
+                              tamanho: 15,
+                              peso: 600,
+                              altura: 1.3,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'segure para trocar a foto',
+                            style: TemaCamda.numeroStyle(
+                              tamanho: 10,
+                              cor: TemaCamda.textoFraco,
+                              espacamento: 0.4,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 14,
-                    right: 14,
-                    child: _BotaoCanto(
-                      icone: Icons.photo_camera_outlined,
-                      corIcone: TemaCamda.texto,
-                      corBorda: TemaCamda.borda,
-                      fundo: TemaCamda.card.withValues(alpha: 0.85),
-                      onTap: onAbrirSheet,
                     ),
                   ),
                 ],
               )
-            : InkWell(
-                onTap: onAbrirSheet,
-                child: Center(
-                  child: Column(
+            // Sem foto: só o convite do meio abre as opções; tocar fora
+            // dele desvira (antes o card inteiro abria a câmera e não dava
+            // para voltar à frente).
+            : Center(
+                child: InkWell(
+                  key: const ValueKey('adicionar-foto'),
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: onAbrirSheet,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Stack(
@@ -455,6 +425,7 @@ class _Verso extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
       ),
     );
   }
