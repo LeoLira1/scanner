@@ -141,6 +141,56 @@ class EstoqueService {
     }
   }
 
+  /// Sugestões para o autocompletar, enquanto a pessoa ainda digita.
+  ///
+  /// Texto com cara de código ('2541', 'US25') traz os códigos que COMEÇAM
+  /// por ele (com ou sem o prefixo US) e, logo depois, nomes que casam — '20L'
+  /// tem dígito mas é pedaço de nome. Texto comum vai para a busca por nome,
+  /// com a mesma regra de [buscarPorNome]. Menos de [minLetrasBusca]
+  /// caracteres não sugere nada.
+  ///
+  /// Lança [ConsultaException] como as demais consultas; a tela engole o erro,
+  /// porque sugestão é ajuda, não resposta.
+  Future<List<ProdutoEncontrado>> sugerir(
+    String termo, {
+    int limite = limiteSugestoes,
+  }) async {
+    final t = termo.trim();
+    if (chaveBusca(t).replaceAll(' ', '').length < minLetrasBusca) {
+      return const [];
+    }
+
+    final porCodigo = <ProdutoEncontrado>[];
+    if (pareceCodigo(t)) {
+      final prefixo = extrairCodigo(t)!;
+      final client = await _clientePronto(TursoService());
+      try {
+        final stmt = await client.prepare(
+          "$_colunasEstoque WHERE UPPER(TRIM(codigo)) LIKE ? || '%' "
+          "OR UPPER(TRIM(codigo)) LIKE 'US' || ? || '%' "
+          'LIMIT 80',
+        );
+        final linhas =
+            _mapearLinhas(await stmt.query(positional: [prefixo, prefixo]));
+        porCodigo.addAll(ordenarSugestoesPorCodigo(
+          prefixo,
+          agruparPorNome(linhas),
+        ));
+      } catch (e) {
+        throw ConsultaException('Falha na busca: $e');
+      }
+    }
+
+    final vistos = {for (final p in porCodigo) p.codigo};
+    final lista = [...porCodigo];
+    if (lista.length < limite) {
+      for (final p in await buscarPorNome(t, limite: limite)) {
+        if (vistos.add(p.codigo)) lista.add(p);
+      }
+    }
+    return lista.length > limite ? lista.sublist(0, limite) : lista;
+  }
+
   static const _colunasEstoque =
       'SELECT codigo, produto, categoria, qtd_sistema, ultima_contagem '
       'FROM estoque_mestre';

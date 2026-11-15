@@ -544,4 +544,51 @@ void main() {
       expect(formatarQuantidade(-1234), '-1.234');
     });
   });
+
+  group('autocompletar', () {
+    test('palavra que começa pelo digitado vem antes da que só contém', () {
+      final ordenados = ordenarPorRelevancia('bor', const [
+        ProdutoEncontrado(codigo: '1', nome: 'FUNGICIDA AZBORX 1L', total: 5),
+        ProdutoEncontrado(codigo: '2', nome: 'HERBICIDA BORAL 500 SC 20L', total: 5),
+      ]);
+      expect(ordenados.map((p) => p.codigo).toList(), ['2', '1']);
+    });
+
+    test('no empate, produto com saldo vem antes do zerado', () {
+      final ordenados = ordenarPorRelevancia('boral', const [
+        ProdutoEncontrado(codigo: '1', nome: 'HERBICIDA BORAL 1L', total: 0),
+        ProdutoEncontrado(codigo: '2', nome: 'HERBICIDA BORAL 20L', total: 12),
+      ]);
+      expect(ordenados.map((p) => p.codigo).toList(), ['2', '1']);
+    });
+
+    test('código: exato primeiro, depois o mais curto, US conta sem prefixo',
+        () {
+      final ordenados = ordenarSugestoesPorCodigo('2541', const [
+        ProdutoEncontrado(codigo: '254199', codigos: ['254199'], nome: 'B'),
+        ProdutoEncontrado(codigo: '25418', codigos: ['25418'], nome: 'C'),
+        ProdutoEncontrado(codigo: 'US2541', codigos: ['US2541'], nome: 'A'),
+      ]);
+      expect(ordenados.map((p) => p.codigo).toList(),
+          ['US2541', '25418', '254199']);
+    });
+
+    test('destaca o que casou, ignorando acento e maiúscula', () {
+      expect(destacarBusca('HERBICIDA BORAL 20L', 'bor 20'), const [
+        TrechoNome('HERBICIDA '),
+        TrechoNome('BOR', destaque: true),
+        TrechoNome('AL '),
+        TrechoNome('20', destaque: true),
+        TrechoNome('L'),
+      ]);
+      expect(destacarBusca('ORQUÍDEA', 'orqui'), const [
+        TrechoNome('ORQUÍ', destaque: true),
+        TrechoNome('DEA'),
+      ]);
+    });
+
+    test('sem termo, o nome vai inteiro sem destaque', () {
+      expect(destacarBusca('BORAL', ''), const [TrechoNome('BORAL')]);
+    });
+  });
 }
