@@ -156,6 +156,9 @@ const int minLetrasBusca = 3;
 /// ('herbicida'): a tela pede para refinar em vez de rolar o catálogo.
 const int limiteBusca = 60;
 
+/// Itens no autocompletar: o que cabe acima do teclado sem rolar muito.
+const int limiteSugestoes = 8;
+
 /// Palavras de um termo de busca, normalizadas ([chaveBusca]) e sem os
 /// pedaços vazios: 'boral  20l' → ['BORAL', '20L'].
 List<String> palavrasBusca(String termo) {
@@ -252,27 +255,123 @@ List<ProdutoEncontrado> agruparPorNome(List<CodigoSaldo> linhas) {
 }
 
 /// Ordem de exibição da busca: nome igual ao digitado primeiro, depois os
-/// que começam pelo termo, depois os que contêm o termo inteiro e por fim os
-/// que só têm as palavras espalhadas. Empate resolve em ordem alfabética.
+/// que começam pelo termo, depois os que têm cada palavra digitada no INÍCIO
+/// de uma palavra do nome ('bor' → HERBICIDA **BOR**AL antes de
+/// FUNGICIDA AZ**BOR**…), depois os que contêm o termo inteiro e por fim os
+/// que só têm as palavras espalhadas no meio. No empate, produto com saldo
+/// vem antes do zerado e depois a ordem alfabética.
 List<ProdutoEncontrado> ordenarPorRelevancia(
   String termo,
   List<ProdutoEncontrado> achados,
 ) {
   final chaveTermo = chaveBusca(termo);
+  final palavras = palavrasBusca(termo);
   int peso(ProdutoEncontrado p) {
     final chave = chaveBusca(p.nome);
     if (chave == chaveTermo) return 0;
     if (chave.startsWith(chaveTermo)) return 1;
-    if (chave.contains(chaveTermo)) return 2;
-    return 3;
+    final doNome = chave.split(' ');
+    if (palavras.isNotEmpty &&
+        palavras.every((w) => doNome.any((n) => n.startsWith(w)))) {
+      return 2;
+    }
+    if (chave.contains(chaveTermo)) return 3;
+    return 4;
   }
 
   final lista = [...achados];
   lista.sort((a, b) {
     final c = peso(a).compareTo(peso(b));
-    return c != 0 ? c : chaveBusca(a.nome).compareTo(chaveBusca(b.nome));
+    if (c != 0) return c;
+    final s = (b.total > 0 ? 1 : 0).compareTo(a.total > 0 ? 1 : 0);
+    return s != 0 ? s : chaveBusca(a.nome).compareTo(chaveBusca(b.nome));
   });
   return lista;
+}
+
+/// Ordem das sugestões por código: código exato primeiro, depois os mais
+/// curtos (o digitado está mais "completo" neles) e então a ordem do
+/// próprio código. Vale para o código com ou sem prefixo US.
+List<ProdutoEncontrado> ordenarSugestoesPorCodigo(
+  String prefixo,
+  List<ProdutoEncontrado> achados,
+) {
+  final alvo = prefixo.trim().toUpperCase();
+  String melhor(ProdutoEncontrado p) {
+    // O código do grupo que casa com o digitado — é ele que importa aqui.
+    for (final c in p.codigos) {
+      if (c.startsWith(alvo)) return c;
+    }
+    for (final c in p.codigos) {
+      if (c.startsWith('US$alvo')) return c.substring(2);
+    }
+    return p.codigo;
+  }
+
+  final lista = [...achados];
+  lista.sort((a, b) {
+    final ca = melhor(a), cb = melhor(b);
+    final ea = ca == alvo ? 0 : 1, eb = cb == alvo ? 0 : 1;
+    if (ea != eb) return ea.compareTo(eb);
+    if (ca.length != cb.length) return ca.length.compareTo(cb.length);
+    return ca.compareTo(cb);
+  });
+  return lista;
+}
+
+/// Um pedaço do nome do produto, marcado se casou com o que foi digitado.
+class TrechoNome {
+  final String texto;
+  final bool destaque;
+  const TrechoNome(this.texto, {this.destaque = false});
+
+  @override
+  bool operator ==(Object other) =>
+      other is TrechoNome && other.texto == texto && other.destaque == destaque;
+
+  @override
+  int get hashCode => Object.hash(texto, destaque);
+
+  @override
+  String toString() => destaque ? '[$texto]' : texto;
+}
+
+/// Quebra [nome] em trechos, marcando onde aparece cada palavra digitada —
+/// para o autocompletar mostrar em destaque o que casou. Ignora acento e
+/// maiúscula como a busca ('orqui' destaca 'ORQUÍ' em 'ORQUÍDEA').
+List<TrechoNome> destacarBusca(String nome, String termo) {
+  final palavras = palavrasBusca(termo);
+  if (nome.isEmpty) return const [];
+  if (palavras.isEmpty) return [TrechoNome(nome)];
+
+  // Marca por caractere, comparando caractere a caractere com a chave sem
+  // acento. Só vale quando a chave tem o mesmo tamanho do original (o caso
+  // comum: acento pré-composto vira uma letra só); senão, sem destaque.
+  final chars = nome.split('');
+  final chave = chars.map((c) => chaveBusca(c).isEmpty ? ' ' : chaveBusca(c));
+  final normal = chave.map((c) => c.length == 1 ? c : ' ').join();
+  if (normal.length != nome.length) return [TrechoNome(nome)];
+
+  final marca = List.filled(nome.length, false);
+  for (final w in palavras) {
+    var i = normal.indexOf(w);
+    while (i >= 0) {
+      for (var k = i; k < i + w.length; k++) {
+        marca[k] = true;
+      }
+      i = normal.indexOf(w, i + w.length);
+    }
+  }
+
+  final trechos = <TrechoNome>[];
+  var inicio = 0;
+  for (var i = 1; i <= nome.length; i++) {
+    if (i == nome.length || marca[i] != marca[inicio]) {
+      trechos.add(TrechoNome(nome.substring(inicio, i), destaque: marca[inicio]));
+      inicio = i;
+    }
+  }
+  return trechos;
 }
 
 /// Filtra e ordena linhas de `estoque_mestre` pelo nome digitado.

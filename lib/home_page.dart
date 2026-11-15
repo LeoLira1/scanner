@@ -8,6 +8,7 @@ import 'estoque_service.dart';
 import 'produto_page.dart';
 import 'resultados_page.dart';
 import 'scanner_page.dart';
+import 'sugestoes_busca.dart';
 import 'tema.dart';
 import 'turso_service.dart';
 
@@ -20,6 +21,17 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _codigoCtrl = TextEditingController();
+  final _foco       = FocusNode();
+
+  // Autocompletar: a consulta sai 250 ms depois da última letra, e cada uma
+  // leva um número — resposta de uma letra antiga que chegue atrasada é
+  // descartada em vez de sobrescrever a lista da letra atual.
+  static const _esperaSugestao = Duration(milliseconds: 250);
+  Timer? _timerSugestao;
+  int _seqSugestao = 0;
+  String _textoSugerido = '';
+  List<ProdutoEncontrado> _sugestoes = const [];
+  bool _buscandoSugestoes = false;
 
   bool    _configurado = false;
   bool    _carregando  = true;
@@ -32,14 +44,75 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _verificarConfiguracao();
     unawaited(TursoService().iniciarAutomatico());
+    _codigoCtrl.addListener(_aoDigitar);
+    _foco.addListener(_aoMudarFoco);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     TursoService().pararAutomatico();
+    _timerSugestao?.cancel();
     _codigoCtrl.dispose();
+    _foco.dispose();
     super.dispose();
+  }
+
+  void _aoMudarFoco() {
+    if (mounted) setState(() {});
+  }
+
+  /// O controller avisa também quando só o cursor anda; a busca só sai quando
+  /// o TEXTO muda.
+  void _aoDigitar() {
+    final texto = _codigoCtrl.text;
+    if (texto == _textoSugerido) return;
+    _textoSugerido = texto;
+    _timerSugestao?.cancel();
+
+    if (chaveBusca(texto).replaceAll(' ', '').length < minLetrasBusca) {
+      _seqSugestao++;
+      setState(() {
+        _sugestoes = const [];
+        _buscandoSugestoes = false;
+      });
+      return;
+    }
+    _timerSugestao = Timer(_esperaSugestao, () => _buscarSugestoes(texto));
+    // Redesenha já: o modo "digitando" (câmera some, campo sobe) depende do
+    // texto, não só das sugestões.
+    setState(() {});
+  }
+
+  Future<void> _buscarSugestoes(String texto) async {
+    final minha = ++_seqSugestao;
+    setState(() => _buscandoSugestoes = true);
+
+    var lista = const <ProdutoEncontrado>[];
+    try {
+      lista = await EstoqueService().sugerir(texto);
+    } on ConsultaException {
+      // Sugestão é ajuda: sem banco, a busca do botão mostra o erro.
+    }
+
+    if (!mounted || minha != _seqSugestao) return;
+    setState(() {
+      _sugestoes = lista;
+      _buscandoSugestoes = false;
+    });
+  }
+
+  void _limparSugestoes() {
+    _timerSugestao?.cancel();
+    _seqSugestao++;
+    _sugestoes = const [];
+    _buscandoSugestoes = false;
+  }
+
+  Future<void> _escolherSugestao(ProdutoEncontrado produto) async {
+    setState(_limparSugestoes);
+    _foco.unfocus();
+    await _consultar(produto.codigo);
   }
 
   /// O relógio da atualização automática só corre com o app na tela: em
@@ -123,6 +196,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (_consultando) return;
     final termo = leitura.trim();
     setState(() {
+      _limparSugestoes();
       _consultando = true;
       _erro        = null;
     });
@@ -228,6 +302,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           : _configurado
               ? _Busca(
                   codigoCtrl: _codigoCtrl,
+                  foco: _foco,
+                  sugestoes: _sugestoes,
+                  buscandoSugestoes: _buscandoSugestoes,
+                  onEscolherSugestao: _escolherSugestao,
                   consultando: _consultando,
                   erro: _erro,
                   onConsultar: _consultar,
@@ -244,6 +322,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 class _Busca extends StatelessWidget {
   const _Busca({
     required this.codigoCtrl,
+    required this.foco,
+    required this.sugestoes,
+    required this.buscandoSugestoes,
+    required this.onEscolherSugestao,
     required this.consultando,
     required this.erro,
     required this.onConsultar,
@@ -251,6 +333,10 @@ class _Busca extends StatelessWidget {
   });
 
   final TextEditingController codigoCtrl;
+  final FocusNode foco;
+  final List<ProdutoEncontrado> sugestoes;
+  final bool buscandoSugestoes;
+  final ValueChanged<ProdutoEncontrado> onEscolherSugestao;
   final bool consultando;
   final String? erro;
   final void Function(String) onConsultar;
@@ -258,15 +344,21 @@ class _Busca extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    // Digitando: o campo sobe para o topo e a câmera sai de cena, para as
+    // sugestões caberem acima do teclado.
+    final digitando = foco.hasFocus && codigoCtrl.text.trim().isNotEmpty;
+    return Align(
+      alignment: digitando ? Alignment.topCenter : Alignment.center,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (!digitando) ...[
               // Caminho principal: apontar a câmera para a etiqueta.
               ElevatedButton.icon(
                 onPressed: consultando ? null : onEscanear,
@@ -309,17 +401,24 @@ class _Busca extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 22),
+              ],
 
               // O estilo acompanha o que está sendo digitado: monoespaçado
               // e espaçado para código (é o que a etiqueta mostra), texto
               // normal e menor para nome, que é longo e não cabe em 22px.
+              // Chave fixa: quando a câmera sai de cena o campo muda de
+              // posição na coluna, e sem a chave o Flutter recriaria o
+              // TextField — o teclado fecharia no meio da digitação.
               ValueListenableBuilder<TextEditingValue>(
+                key: const ValueKey('campo-busca-builder'),
                 valueListenable: codigoCtrl,
                 builder: (context, valor, _) {
                   final texto   = valor.text.trim();
                   final ehNome  = texto.isNotEmpty && !pareceCodigo(texto);
                   return TextField(
+                    key: const ValueKey('campo-busca'),
                     controller: codigoCtrl,
+                    focusNode: foco,
                     enabled: !consultando,
                     textAlign: TextAlign.center,
                     textCapitalization: TextCapitalization.characters,
@@ -360,7 +459,14 @@ class _Busca extends StatelessWidget {
                   );
                 },
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
+              ListaSugestoes(
+                termo: codigoCtrl.text,
+                sugestoes: sugestoes,
+                carregando: buscandoSugestoes,
+                onEscolher: onEscolherSugestao,
+              ),
+              const SizedBox(height: 10),
 
               // Área de toque generosa (uso de pé, com uma mão), em estilo
               // secundário: a câmera é o caminho principal.
