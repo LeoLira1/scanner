@@ -7,6 +7,7 @@ on:
       # Qualquer branch de trabalho gera APK para testar antes do merge —
       # antes só valia uma branch fixa, e as demais passavam em branco.
       - "claude/**"
+      - "ccr-**"
   workflow_dispatch:
 
 jobs:
@@ -26,9 +27,15 @@ jobs:
           java-version: '17'
 
       - name: Setup Flutter (stable)
+        # Versão fixa: o "stable" solto subiu para 3.50.0, que marca
+        # package:flutter/material.dart como obsoleto (troca por
+        # material_ui) e o flutter analyze passou a falhar em todos os
+        # arquivos. 3.47.2 é a do último APK verde (#27). Subir de versão
+        # aqui é decisão explícita, junto com a migração dos imports.
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: '3.47.2'
           cache: true
 
       - name: Scaffold Android project structure
