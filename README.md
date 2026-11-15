@@ -300,6 +300,19 @@ data da **última atualização** e um **diagnóstico** com quanto a última dem
 quanto o espelho ocupa no aparelho e quantas linhas há em cada tabela — é com
 ele que dá para comparar o antes e o depois sem PC.
 
+## Fotos dos produtos (só no aparelho)
+
+Na tela do produto, o botão de foto no canto do card vira a carta: o verso
+mostra a foto (ou convida a adicionar uma), com opções de tirar, escolher da
+galeria, trocar e remover.
+
+- Ficam em `<documentos do app>/fotos/<codigo>.jpg`, com o código sem o
+  prefixo `US`. Vale a foto de qualquer código vinculado ao produto.
+- Gravadas com `maxWidth 900` e `imageQuality 80` (`image_picker`).
+- **Nada vai para o Turso, o espelho ou o cache** — o app segue somente
+  leitura quanto ao banco. Desinstalar o app apaga as fotos.
+- O ícone da frente fica verde quando o produto já tem foto.
+
 ## Como gerar o APK (sem PC)
 
 1. Vá em **Actions → Build & Release APK → Run workflow**.

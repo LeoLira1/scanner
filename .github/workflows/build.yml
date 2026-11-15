@@ -54,6 +54,13 @@ jobs:
             sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <application|' \
               "$MANIFEST"
 
+          # Câmera para as fotos de produto (image_picker). O mobile_scanner
+          # já declara CAMERA via manifest merge; aqui fica explícito para
+          # não depender disso.
+          grep -q 'android.permission.CAMERA' "$MANIFEST" || \
+            sed -i 's|<application|<uses-permission android:name="android.permission.CAMERA"/>\n    <application|' \
+              "$MANIFEST"
+
           cp -r /tmp/scaffold/android .
 
       - name: Install dependencies
