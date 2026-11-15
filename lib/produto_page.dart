@@ -325,21 +325,25 @@ class _Verso extends StatelessWidget {
         // meio já abre as opções.
         onLongPress: comFoto ? onAbrirSheet : null,
         child: comFoto
-            ? Stack(
-                fit: StackFit.expand,
+            // Foto sempre inteira (contain), nunca cortada: a área livre
+            // fica no fundo do card. O nome vai abaixo da foto, não por
+            // cima, para não tapar o rodapé da imagem.
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Image.file(
-                    arquivo,
-                    key: ValueKey(versao),
-                    fit: BoxFit.cover,
-                    cacheWidth: 900,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Image.file(
+                        arquivo,
+                        key: ValueKey(versao),
+                        fit: BoxFit.contain,
+                        cacheWidth: 900,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
+                  Container(
                       padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
                       decoration: const BoxDecoration(
                         color: TemaCamda.card,
@@ -370,7 +374,6 @@ class _Verso extends StatelessWidget {
                           ),
                         ],
                       ),
-                    ),
                   ),
                 ],
               )
