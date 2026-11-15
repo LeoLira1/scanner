@@ -293,4 +293,72 @@ void main() {
           reason: 'a tela do produto não deve exibir "$termo"');
     }
   });
+
+  group('carta que vira', () {
+    ResultadoConsulta comDoisLotes() {
+      final hoje = DateTime.now();
+      String iso(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      return montarResultado(
+        codigoLido: '42200',
+        linhas: const [
+          CodigoSaldo(
+            codigo: '42200',
+            produto: 'HERBICIDA ROUNDUP ORIGINAL MAIS 20L',
+            categoria: 'HERBICIDAS',
+            qtdSistema: 10,
+          ),
+        ],
+        codigosVinculados: const ['42200'],
+        lotes: [
+          LoteValidade(
+              lote: 'L-PRIMEIRO',
+              vencimento: iso(hoje.add(const Duration(days: 40))),
+              quantidade: 6),
+          LoteValidade(
+              lote: 'L-SEGUNDO',
+              vencimento: iso(hoje.add(const Duration(days: 400))),
+              quantidade: 4),
+        ],
+      );
+    }
+
+    testWidgets('sem ícones de foto/câmera nos cantos', (tester) async {
+      await tester.pumpWidget(_envolver(comDoisLotes()));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.photo_outlined), findsNothing);
+      expect(find.byIcon(Icons.photo_camera_outlined), findsNothing);
+    });
+
+    testWidgets('tocar no card vira para a foto e tocar de novo desvira',
+        (tester) async {
+      await tester.pumpWidget(_envolver(comDoisLotes()));
+      await tester.pumpAndSettle();
+      expect(find.text('adicionar foto'), findsNothing);
+
+      await tester.tap(find.text('HERBICIDA ROUNDUP ORIGINAL MAIS 20L'));
+      await tester.pumpAndSettle();
+      expect(find.text('adicionar foto'), findsOneWidget);
+
+      // Fora do convite "adicionar foto": volta para a frente.
+      await tester.tapAt(tester.getTopLeft(find.byKey(const ValueKey('verso-carta'))) +
+          const Offset(30, 30));
+      await tester.pumpAndSettle();
+      expect(find.text('adicionar foto'), findsNothing);
+      expect(find.text('L-PRIMEIRO'), findsOneWidget);
+    });
+
+    testWidgets('"próximo lote" abre os lotes sem virar o card',
+        (tester) async {
+      await tester.pumpWidget(_envolver(comDoisLotes()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('próximo lote'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('L-SEGUNDO'), findsOneWidget);
+      expect(find.text('adicionar foto'), findsNothing);
+    });
+  });
 }
