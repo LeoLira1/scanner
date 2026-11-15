@@ -1,6 +1,11 @@
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'consulta.dart';
+import 'fotos_produto.dart';
 import 'tema.dart';
 
 /// Tela do produto — layout da maquete tag-estoque.html, sem a linha de
@@ -65,7 +70,7 @@ class ProdutoPage extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _Cartao(resultado: resultado),
+                      _CartaVira(resultado: resultado),
                       const SizedBox(height: 14),
                       Text(
                         'CAMDA · QUIRINÓPOLIS GO',
@@ -82,6 +87,374 @@ class ProdutoPage extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+const _verdeFotoIcone = Color(0xFF6FCF97);
+const _verdeFotoBorda = Color(0xFF4F9B72);
+const _raioCartao = 32.0;
+
+/// Card com foto do produto no verso — "carta que vira". Frente = [_Cartao];
+/// verso = foto (ou convite para adicionar). Fotos só locais (ver
+/// [FotosProduto]); nada disso toca o banco.
+class _CartaVira extends StatefulWidget {
+  const _CartaVira({required this.resultado});
+
+  final ResultadoConsulta resultado;
+
+  @override
+  State<_CartaVira> createState() => _CartaViraState();
+}
+
+class _CartaViraState extends State<_CartaVira>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 550),
+  );
+  late final Animation<double> _giro =
+      CurvedAnimation(parent: _ctl, curve: Curves.easeInOut);
+
+  FotosProduto? _fotos;
+  File? _foto;
+  int _versao = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    FotosProduto.abrir().then((f) {
+      if (!mounted) return;
+      setState(() {
+        _fotos = f;
+        _foto = f.existente(widget.resultado);
+      });
+    }).catchError((_) {
+      // Sem pasta de documentos: o app segue sem fotos.
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _virar() => _ctl.forward();
+  void _desvirar() => _ctl.reverse();
+
+  void _atualizar() {
+    // Descarta a imagem decodificada: o arquivo mudou mas o caminho não.
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+    if (!mounted) return;
+    setState(() {
+      _versao++;
+      _foto = _fotos?.existente(widget.resultado);
+    });
+  }
+
+  Future<void> _escolher(ImageSource origem) async {
+    final fotos = _fotos;
+    if (fotos == null) return;
+    try {
+      if (await fotos.salvar(widget.resultado, origem)) _atualizar();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('não consegui acessar a câmera/galeria'),
+      ));
+    }
+  }
+
+  Future<void> _remover() async {
+    await _fotos?.remover(widget.resultado);
+    _atualizar();
+  }
+
+  /// Bottom sheet de ações. [comFoto] decide entre "Trocar foto" + "Remover"
+  /// e "Tirar foto" / "Escolher da galeria".
+  Future<void> _abrirSheet({required bool comFoto}) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: TemaCamda.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        Widget item(IconData icone, String texto, VoidCallback acao,
+            {Color? cor}) {
+          return ListTile(
+            leading: Icon(icone, color: cor ?? TemaCamda.texto),
+            title: Text(texto,
+                style: TemaCamda.textoStyle(
+                    tamanho: 15, cor: cor ?? TemaCamda.texto)),
+            onTap: () {
+              Navigator.pop(ctx);
+              acao();
+            },
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (comFoto)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                    child: Text(
+                      'TROCAR FOTO',
+                      style: TemaCamda.numeroStyle(
+                        tamanho: 10,
+                        cor: TemaCamda.textoFraco,
+                        espacamento: 1.4,
+                      ),
+                    ),
+                  ),
+                item(Icons.photo_camera_outlined,
+                    comFoto ? 'Trocar foto · câmera' : 'Tirar foto',
+                    () => _escolher(ImageSource.camera)),
+                item(Icons.photo_library_outlined,
+                    comFoto ? 'Trocar foto · galeria' : 'Escolher da galeria',
+                    () => _escolher(ImageSource.gallery)),
+                if (comFoto)
+                  item(Icons.delete_outline, 'Remover foto', _remover,
+                      cor: TemaCamda.vermelho),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final temFoto = _foto != null;
+    return AnimatedBuilder(
+      animation: _giro,
+      builder: (context, _) {
+        final angulo = _giro.value * math.pi;
+        final mostraVerso = angulo > math.pi / 2;
+        return Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.0012)
+            ..rotateY(angulo),
+          child: Stack(
+            children: [
+              // A frente sempre ocupa o layout: define o tamanho do verso.
+              Opacity(
+                opacity: mostraVerso ? 0 : 1,
+                child: IgnorePointer(
+                  ignoring: mostraVerso,
+                  child: Stack(
+                    children: [
+                      _Cartao(resultado: widget.resultado),
+                      Positioned(
+                        top: 14,
+                        right: 14,
+                        child: _BotaoCanto(
+                          icone: Icons.photo_outlined,
+                          corIcone:
+                              temFoto ? _verdeFotoIcone : TemaCamda.textoFraco,
+                          corBorda:
+                              temFoto ? _verdeFotoBorda : TemaCamda.borda,
+                          onTap: _virar,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (mostraVerso)
+                Positioned.fill(
+                  child: Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()..rotateY(math.pi),
+                    child: _Verso(
+                      resultado: widget.resultado,
+                      foto: _foto,
+                      versao: _versao,
+                      onDesvirar: _desvirar,
+                      onAbrirSheet: () => _abrirSheet(comFoto: temFoto),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Botão quadrado pequeno (36x36, raio 10) usado nos cantos da carta.
+class _BotaoCanto extends StatelessWidget {
+  const _BotaoCanto({
+    required this.icone,
+    required this.corIcone,
+    required this.corBorda,
+    required this.onTap,
+    this.fundo = Colors.transparent,
+  });
+
+  final IconData icone;
+  final Color corIcone;
+  final Color corBorda;
+  final Color fundo;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: fundo,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: corBorda),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(icone, size: 20, color: corIcone),
+        ),
+      ),
+    );
+  }
+}
+
+class _Verso extends StatelessWidget {
+  const _Verso({
+    required this.resultado,
+    required this.foto,
+    required this.versao,
+    required this.onDesvirar,
+    required this.onAbrirSheet,
+  });
+
+  final ResultadoConsulta resultado;
+  final File? foto;
+  final int versao;
+  final VoidCallback onDesvirar;
+  final VoidCallback onAbrirSheet;
+
+  @override
+  Widget build(BuildContext context) {
+    final arquivo = foto;
+    final comFoto = arquivo != null && arquivo.existsSync();
+    final nome = resultado.nomeProduto.isEmpty
+        ? 'Produto sem nome'
+        : resultado.nomeProduto;
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: TemaCamda.card,
+        borderRadius: BorderRadius.circular(_raioCartao),
+        border: Border.all(color: TemaCamda.borda),
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onDesvirar,
+        child: comFoto
+            ? Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.file(
+                    arquivo,
+                    key: ValueKey(versao),
+                    fit: BoxFit.cover,
+                    cacheWidth: 900,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
+                      decoration: const BoxDecoration(
+                        color: TemaCamda.card,
+                        border: Border(top: BorderSide(color: TemaCamda.borda)),
+                      ),
+                      child: Text(
+                        nome,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TemaCamda.textoStyle(
+                          tamanho: 15,
+                          peso: 600,
+                          altura: 1.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 14,
+                    right: 14,
+                    child: _BotaoCanto(
+                      icone: Icons.photo_camera_outlined,
+                      corIcone: TemaCamda.texto,
+                      corBorda: TemaCamda.borda,
+                      fundo: TemaCamda.card.withValues(alpha: 0.85),
+                      onTap: onAbrirSheet,
+                    ),
+                  ),
+                ],
+              )
+            : InkWell(
+                onTap: onAbrirSheet,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          const Icon(Icons.photo_camera_outlined,
+                              size: 56, color: TemaCamda.textoFraco),
+                          Positioned(
+                            right: -8,
+                            top: -8,
+                            child: Container(
+                              width: 22,
+                              height: 22,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: TemaCamda.laranja,
+                              ),
+                              child: const Icon(Icons.add,
+                                  size: 16, color: Colors.white),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'adicionar foto',
+                        style: TemaCamda.textoStyle(tamanho: 16, peso: 600),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'toque pra tirar ou escolher',
+                        style: TemaCamda.numeroStyle(
+                          tamanho: 12,
+                          cor: TemaCamda.textoFraco,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
       ),
     );
   }
