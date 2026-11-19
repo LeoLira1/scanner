@@ -463,6 +463,19 @@ List<CodigoSaldo> irmaosPorNome(
   return [for (final c in codigos) porCodigo[c]!];
 }
 
+/// O produto do mapa a que os irmãos de mesmo nome pertencem, quando é um
+/// só — ou null quando nenhum irmão está no mapa ou eles se dividem entre
+/// produtos diferentes (aí o nome é ambíguo e o cadastro manda).
+///
+/// [vinculos]: código do irmão → produto_id(s) em que ele está cadastrado.
+String? produtoUnicoDosVinculos(Map<String, Set<String>> vinculos) {
+  final ids = <String>{};
+  for (final v in vinculos.values) {
+    ids.addAll(v.where((id) => id.trim().isNotEmpty));
+  }
+  return ids.length == 1 ? ids.first : null;
+}
+
 /// Resultado completo de uma consulta por código.
 class ResultadoConsulta {
   final String codigoLido;
@@ -488,6 +501,10 @@ class ResultadoConsulta {
 
   /// Códigos vinculados ao produto que não têm linha em estoque_mestre.
   final List<String> codigosSemSaldo;
+
+  /// Códigos somados ao produto do mapa pelo NOME, sem estarem no cadastro
+  /// — o lido estava fora do mapa, mas o irmão de mesmo nome está.
+  final List<String> codigosForaDoMapa;
 
   /// Última contagem mais recente entre as linhas somadas.
   final String? ultimaContagem;
@@ -515,6 +532,7 @@ class ResultadoConsulta {
     required this.vinculado,
     this.unidadePad,
     this.codigosSemSaldo = const [],
+    this.codigosForaDoMapa = const [],
     this.ultimaContagem,
     this.lotes = const [],
     this.lotesIndisponiveis = false,
@@ -533,7 +551,11 @@ class ResultadoConsulta {
   /// porque o nome bateu, e não porque alguém os vinculou. Mais de uma linha
   /// somada sem vínculo no mapa só acontece por esse caminho.
   String? get textoAvisoNaoVinculado {
-    if (vinculado) return null;
+    if (vinculado) {
+      if (codigosForaDoMapa.isEmpty) return null;
+      return '${codigosForaDoMapa.join(', ')} fora do mapa · '
+          'somado pelo nome ao produto cadastrado';
+    }
     if (saldos.length > 1) {
       return 'códigos somados pelo nome · sem vínculo no mapa, '
           'o total pode estar incompleto';
@@ -576,6 +598,7 @@ class ResultadoConsulta {
         vinculado: vinculado,
         unidadePad: unidadePad,
         codigosSemSaldo: codigosSemSaldo,
+        codigosForaDoMapa: codigosForaDoMapa,
         ultimaContagem: ultimaContagem,
         lotes: ordenarLotesPorVencimento(lotes),
         lotesIndisponiveis: indisponivel,
@@ -594,6 +617,7 @@ ResultadoConsulta montarResultado({
   required String codigoLido,
   required List<CodigoSaldo> linhas,
   required List<String> codigosVinculados,
+  List<String> codigosForaDoMapa = const [],
   String? nomeMapa,
   String? unidadePad,
   List<LoteValidade> lotes = const [],
@@ -659,6 +683,7 @@ ResultadoConsulta montarResultado({
     vinculado: vinculado,
     unidadePad: unidadePad,
     codigosSemSaldo: semSaldo,
+    codigosForaDoMapa: codigosForaDoMapa,
     ultimaContagem: ultima,
     lotes: ordenarLotesPorVencimento(lotes),
     lotesIndisponiveis: lotesIndisponiveis,
