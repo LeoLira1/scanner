@@ -314,6 +314,51 @@ void main() {
     });
   });
 
+  group('código fora do mapa com irmão cadastrado (caso ALION 5L)', () {
+    const alion = [
+      CodigoSaldo(codigo: '227579', produto: 'HERBICIDA ALION 5L', qtdSistema: 0),
+      CodigoSaldo(codigo: 'US227579', produto: 'HERBICIDA ALION 5L', qtdSistema: 8),
+    ];
+
+    test('irmãos num produto só do mapa: devolve esse produto', () {
+      expect(
+        produtoUnicoDosVinculos({
+          'US227579': {'5b845dbb'},
+        }),
+        '5b845dbb',
+      );
+    });
+
+    test('irmãos em produtos diferentes ou sem vínculo: null', () {
+      expect(produtoUnicoDosVinculos(const {}), isNull);
+      expect(
+        produtoUnicoDosVinculos({
+          'A1': {'p1'},
+          'A2': {'p2'},
+        }),
+        isNull,
+      );
+    });
+
+    test('abrir pelo 227579 soma o US227579 e avisa que falta vincular', () {
+      final r = montarResultado(
+        codigoLido: '227579',
+        linhas: alion,
+        codigosVinculados: const ['227579', 'US227579'],
+        codigosForaDoMapa: const ['227579'],
+        nomeMapa: 'HERBICIDA ALION 5L',
+      );
+      expect(r.total, 8);
+      expect(r.vinculado, isTrue);
+      expect(r.codigosSomados, '227579 + US227579');
+      expect(
+        r.textoAvisoNaoVinculado,
+        '227579 fora do mapa · somado pelo nome ao produto cadastrado',
+      );
+      expect(r.copiarComLotes(const []).codigosForaDoMapa, ['227579']);
+    });
+  });
+
   group('lista de vencimentos — lote a carregar primeiro', () {
     test('chaveValidade tira prefixo do BI, acento e espaço extra', () {
       expect(

@@ -60,8 +60,53 @@ class EstoqueService {
         // prefixo ('254185' ↔ 'US254185') deixava de fora o '100237191' do
         // Ultimato e mostrava metade do saldo — erro pior que "não
         // encontrado", porque quem está no galpão acredita no número.
-        final linhas = await _irmaosPorNome(client, codigo);
-        if (linhas.isEmpty) return null;
+        final proprias = await _lerEstoque(client, [codigo]);
+        if (proprias.isEmpty) return null;
+        final lida = proprias.first;
+        final candidatas = [lida, ...await _candidatasPorNome(client, lida)];
+        final grupo = irmaosPorNome(codigo, candidatas);
+
+        // O mapa manda mais que o nome. A pergunta só vale para quem entrou
+        // no grupo — perguntar pelo resultado inteiro do filtro seria um IN
+        // com a tabela toda dentro.
+        final vinculos = grupo.length <= 1
+            ? const <String, Set<String>>{}
+            : await _vinculosDosCodigos(client, [
+                for (final c in grupo)
+                  if (c.codigo != lida.codigo) c.codigo,
+              ]);
+
+        // Irmão de mesmo nome cadastrado num produto só: o código lido é
+        // esse produto, que só não ganhou o código no cadastro. Caso do
+        // ALION 5L — mapa com 'US227579', estoque com '227579' (0) e
+        // 'US227579' (8): abrir pelo 227579 mostrava 0.
+        final produtoId = produtoUnicoDosVinculos(vinculos);
+        if (produtoId != null) {
+          final irmao = vinculos.keys.firstWhere(
+            (c) => vinculos[c]!.contains(produtoId),
+          );
+          final adotado = await _resolverProduto(client, irmao);
+          if (adotado != null) {
+            return await _consultarProduto(
+              client,
+              codigo,
+              adotado,
+              doCache: doCache,
+              sincronizadoEm: sincronizadoEm,
+              foraDoMapa: codigo,
+            );
+          }
+        }
+
+        // Irmãos espalhados por produtos diferentes do mapa: dois produtos
+        // separados no cadastro não podem virar um só aqui — saem da soma.
+        final linhas = vinculos.isEmpty
+            ? grupo
+            : irmaosPorNome(
+                codigo,
+                candidatas,
+                codigosNoMapa: vinculos.keys.toSet(),
+              );
         final base = montarResultado(
           codigoLido: codigo,
           linhas: linhas,
@@ -72,33 +117,61 @@ class EstoqueService {
         return await _comLotes(client, base);
       }
 
-      // 2. Todos os códigos do produto (principal + secundários), na forma
-      //    canônica e ordenados — como get_codigos_produto.
-      final codigos = await _codigosDoProduto(
+      return await _consultarProduto(
         client,
-        produto.produtoId,
-        produto.codigoPrincipal,
-      );
-
-      // 3. Soma o saldo de todos os códigos do grupo.
-      final linhas = await _lerEstoque(client, codigos);
-      if (linhas.isEmpty && produto.nome.isEmpty) return null;
-
-      final base = montarResultado(
-        codigoLido: codigo,
-        linhas: linhas,
-        codigosVinculados: codigos,
-        nomeMapa: produto.nome,
-        unidadePad: produto.unidadePad,
-        doCacheLocal: doCache,
+        codigo,
+        produto,
+        doCache: doCache,
         sincronizadoEm: sincronizadoEm,
       );
-      return await _comLotes(client, base, nomeMapa: produto.nome);
     } on ConsultaException {
       rethrow;
     } catch (e) {
       throw ConsultaException('Falha na consulta: $e');
     }
+  }
+
+  /// Saldo de um produto do mapa: soma de todos os seus códigos.
+  ///
+  /// [foraDoMapa]: código lido que não está no cadastro mas foi reconhecido
+  /// pelo nome como sendo deste produto — entra na soma e a tela avisa que
+  /// falta vinculá-lo.
+  Future<ResultadoConsulta?> _consultarProduto(
+    LibsqlClient client,
+    String codigo,
+    _ProdutoMapa produto, {
+    required bool doCache,
+    required DateTime? sincronizadoEm,
+    String? foraDoMapa,
+  }) async {
+    // Todos os códigos do produto (principal + secundários), na forma
+    // canônica e ordenados — como get_codigos_produto.
+    final codigos = await _codigosDoProduto(
+      client,
+      produto.produtoId,
+      produto.codigoPrincipal,
+    );
+    if (foraDoMapa != null && !codigos.contains(foraDoMapa)) {
+      codigos
+        ..add(foraDoMapa)
+        ..sort();
+    }
+
+    // Soma o saldo de todos os códigos do grupo.
+    final linhas = await _lerEstoque(client, codigos);
+    if (linhas.isEmpty && produto.nome.isEmpty) return null;
+
+    final base = montarResultado(
+      codigoLido: codigo,
+      linhas: linhas,
+      codigosVinculados: codigos,
+      codigosForaDoMapa: foraDoMapa == null ? const [] : [foraDoMapa],
+      nomeMapa: produto.nome,
+      unidadePad: produto.unidadePad,
+      doCacheLocal: doCache,
+      sincronizadoEm: sincronizadoEm,
+    );
+    return await _comLotes(client, base, nomeMapa: produto.nome);
   }
 
   /// Busca produtos pelo NOME — o caminho de quem tem o produto na mão mas
@@ -414,35 +487,6 @@ class EstoqueService {
     ];
   }
 
-  /// Linhas do produto quando o código lido está fora do mapa: a linha do
-  /// próprio código mais as demais linhas de `estoque_mestre` com o mesmo
-  /// nome de produto.
-  ///
-  /// Lista vazia = o código não tem linha nenhuma em `estoque_mestre`, o
-  /// "não encontrado" da consulta.
-  Future<List<CodigoSaldo>> _irmaosPorNome(
-    LibsqlClient client,
-    String codigo,
-  ) async {
-    final proprias = await _lerEstoque(client, [codigo]);
-    if (proprias.isEmpty) return const [];
-    final lida = proprias.first;
-
-    final candidatas = [lida, ...await _candidatasPorNome(client, lida)];
-    final grupo = irmaosPorNome(codigo, candidatas);
-    if (grupo.length <= 1) return grupo;
-
-    // O mapa manda mais que o nome: irmão já cadastrado em outro produto sai
-    // da soma. A pergunta só vale para quem entrou no grupo — perguntar pelo
-    // resultado inteiro do filtro seria um IN com a tabela toda dentro.
-    final noMapa = await _codigosComVinculo(client, [
-      for (final c in grupo)
-        if (c.codigo != lida.codigo) c.codigo,
-    ]);
-    if (noMapa.isEmpty) return grupo;
-    return irmaosPorNome(codigo, candidatas, codigosNoMapa: noMapa);
-  }
-
   /// Linhas de `estoque_mestre` que podem ter o mesmo nome que [lida].
   ///
   /// O casamento final é em Dart ([irmaosPorNome]); aqui só se corta o
@@ -483,26 +527,28 @@ class EstoqueService {
   }
 
   /// Dos códigos dados, os que têm vínculo em `mapa_produtos` — como código
-  /// principal ou como secundário em `mapa_produtos_codigos`.
+  /// principal ou como secundário em `mapa_produtos_codigos` — com os
+  /// produto_id a que cada um pertence.
   ///
-  /// Banco sem as tabelas do mapa devolve conjunto vazio: aí só o nome
-  /// resta, que é justamente o caminho onde esta consulta é usada.
-  Future<Set<String>> _codigosComVinculo(
+  /// Banco sem as tabelas do mapa devolve mapa vazio: aí só o nome resta,
+  /// que é justamente o caminho onde esta consulta é usada.
+  Future<Map<String, Set<String>>> _vinculosDosCodigos(
     LibsqlClient client,
     List<String> codigos,
   ) async {
     if (codigos.isEmpty) return const {};
     final placeholders = List.filled(codigos.length, '?').join(', ');
-    final achados = <String>{};
+    final achados = <String, Set<String>>{};
     for (final tabela in const ['mapa_produtos', 'mapa_produtos_codigos']) {
       try {
         final stmt = await client.prepare(
-          'SELECT codigo FROM $tabela '
+          'SELECT codigo, produto_id FROM $tabela '
           'WHERE codigo IS NOT NULL AND UPPER(TRIM(codigo)) IN ($placeholders)',
         );
         for (final row in await stmt.query(positional: codigos)) {
           final c = normalizarCodigo(_texto(row['codigo']));
-          if (c != null) achados.add(c);
+          if (c == null) continue;
+          achados.putIfAbsent(c, () => <String>{}).add(_texto(row['produto_id']));
         }
       } catch (e) {
         // Uma tabela ausente não pode derrubar a leitura da outra.
